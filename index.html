@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Precios por Ficha</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-sesion="verificando">
+  <!-- Pantalla de inicio de sesión -->
+  <div id="pantallaLogin" class="login">
+    <form id="formLogin" class="login-caja" autocomplete="on">
+      <h1>Control de Precios</h1>
+      <label>Usuario
+        <input type="text" id="loginUsuario" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <label>Contraseña
+        <input type="password" id="loginClave" name="password" autocomplete="current-password" required>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="loginRecordar" checked>
+        Recordarme en este equipo
+      </label>
+      <p id="loginError" class="error" role="alert"></p>
+      <button type="submit" id="btnEntrar">Entrar</button>
+    </form>
+  </div>
+
+  <header>
+    <h1>Control de Precios</h1>
+    <nav class="menu">
+      <button type="button" class="menu-btn activo" data-vista="fichas">Cotizaciones</button>
+      <button type="button" class="menu-btn" data-vista="singular">Elemento singular</button>
+      <button type="button" class="menu-btn" data-vista="tracking">Tracking</button>
+      <button type="button" class="menu-btn" data-vista="comercios">Comercios</button>
+      <button type="button" class="menu-btn" id="btnSalir" title="Cerrar sesión">Salir (<span id="usuarioActual"></span>)</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Vista: Cotizaciones -->
+    <section id="vista-fichas" class="vista">
+      <div class="barra">
+        <input type="search" id="buscadorId" placeholder="Buscar ID" aria-label="Buscar por ID de ficha" autocomplete="off">
+        <input type="search" id="buscador" placeholder="Buscar por cliente, comercio, marca, remisión o elemento..." aria-label="Búsqueda general" autocomplete="off">
+        <button type="button" id="btnNueva">+ Nueva cotización</button>
+      </div>
+      <h2>Fichas <span id="contador"></span></h2>
+      <div id="resultados"></div>
+    </section>
+
+    <!-- Vista: Elemento singular (historial de precios de un elemento) -->
+    <section id="vista-singular" class="vista" hidden>
+      <h2>Elemento singular <span id="contadorSingular"></span></h2>
+      <div class="fila-singular">
+        <div class="buscador-x">
+          <input type="text" id="buscadorElemento" placeholder="Escribe el elemento para ver su historial de precios..." aria-label="Buscar elemento singular" autocomplete="off">
+          <button type="button" id="btnLimpiarElemento" class="limpiar" aria-label="Borrar búsqueda" title="Borrar" hidden>×</button>
+        </div>
+        <label class="filtro-marca">Marca
+          <select id="filtroMarca"><option value="">Todas las marcas</option></select>
+        </label>
+      </div>
+      <div id="resultadosSingular"></div>
+    </section>
+
+    <!-- Vista: Tracking (tasa de cambio por elemento y comercio) -->
+    <section id="vista-tracking" class="vista" hidden>
+      <h2>Tracking <span id="contadorTracking"></span></h2>
+      <div class="fila-singular">
+        <div class="buscador-x">
+          <input type="text" id="buscadorTracking" placeholder="Escribe el elemento para ver su tasa de cambio..." aria-label="Buscar en tracking" autocomplete="off">
+          <button type="button" id="btnLimpiarTracking" class="limpiar" aria-label="Borrar búsqueda" title="Borrar" hidden>×</button>
+        </div>
+        <label class="filtro-marca">Marca
+          <select id="filtroMarcaTracking"><option value="">Todas las marcas</option></select>
+        </label>
+      </div>
+      <div id="resultadosTracking"></div>
+      <nav id="paginacionTracking" class="paginacion" aria-label="Paginación"></nav>
+    </section>
+
+    <!-- Vista: Comercios -->
+    <section id="vista-comercios" class="vista" hidden>
+      <h2>Comercios <span id="contadorComercios"></span></h2>
+      <form id="formComercio" class="form-comercio" autocomplete="off">
+        <label>Nombre del comercio
+          <input type="text" id="comercioNombre" required>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="comercioMarcas">
+          Emplea marcas
+        </label>
+        <button type="submit">Agregar comercio</button>
+      </form>
+      <ul id="listaComerciosReg" class="lista-comercios"></ul>
+    </section>
+  </main>
+
+  <!-- Ventana emergente (nueva cotización / editar ficha) -->
+  <div id="modal" class="overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="tituloForm">
+      <h2 id="tituloForm">Nueva cotización</h2>
+
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab activo" data-tab="general" aria-selected="true">Datos generales</button>
+        <button type="button" role="tab" class="tab" data-tab="compras" aria-selected="false">Compras</button>
+        <button type="button" role="tab" class="tab" data-tab="obs" aria-selected="false">Observaciones</button>
+      </div>
+
+      <form id="formFicha" autocomplete="off" novalidate>
+        <!-- Pestaña 1: Datos generales -->
+        <div class="panel" data-panel="general">
+          <div class="fila dos">
+            <label>ID de la ficha
+              <input type="text" id="fichaId" required>
+            </label>
+            <label>Cliente <small>(opcional)</small>
+              <input type="text" id="cliente">
+            </label>
+          </div>
+
+          <fieldset>
+            <legend>Remisiones</legend>
+            <div class="fila">
+              <input type="text" id="remisionInput" placeholder="Número de remisión">
+              <button type="button" id="btnAddRemision">Agregar</button>
+            </div>
+            <ul id="listaRemisiones" class="chips"></ul>
+          </fieldset>
+        </div>
+
+        <!-- Pestaña 2: Compras -->
+        <div class="panel" data-panel="compras" hidden>
+          <p id="avisoCatalogo" class="aviso" hidden>
+            Aún no hay comercios registrados. Haz clic fuera de esta ventana (lo escrito se conserva) y regístralos en la pestaña «Comercios».
+          </p>
+          <div id="listaCompras"></div>
+          <button type="button" id="btnAddCompra" class="secundario">+ Agregar comercio</button>
+        </div>
+
+        <!-- Pestaña 3: Observaciones -->
+        <div class="panel" data-panel="obs" hidden>
+          <label>Observaciones <small>(opcional)</small>
+            <textarea id="observaciones" rows="8" placeholder="Notas adicionales de la cotización"></textarea>
+          </label>
+        </div>
+
+        <div class="fila acciones">
+          <button type="submit" id="btnGuardar">Guardar</button>
+          <button type="button" id="btnCerrar" class="secundario">Cerrar</button>
+          <button type="button" id="btnEliminar" class="peligro" hidden>Eliminar ficha</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <p id="mensaje" role="status"></p>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
