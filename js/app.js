@@ -272,7 +272,7 @@ function extrasDelFormulario(excluir = null) {
   const out = [];
   compras.forEach((c, ci) => c.elementos.forEach((el, ei) => {
     if (excluir && excluir.ci === ci && excluir.ei === ei) return;
-    if (!c.fecha) return;
+    if (!c.fecha || !Number.isFinite(el.valorUnitario)) return;
     out.push({ nombre: el.nombre, marca: el.marca, comercio: c.nombre, valorUnitario: el.valorUnitario, fecha: c.fecha });
   }));
   return out;
@@ -475,10 +475,26 @@ function pintarCompras(foco) {
 
       <ul class="items">
         ${c.elementos.map((el, ei) => `
-          <li>
-            <span><strong>${esc(el.nombre)}</strong>${el.marca ? ` <em>· ${esc(el.marca)}</em>` : ""}</span>
-            <span class="el-num">${fmtNum(el.cantidad)} × ${moneda(el.valorUnitario)} = <strong>${moneda(el.valorTotal)}</strong>
-              <button type="button" class="quitar" data-accion="quitarEl" data-ei="${ei}" title="Quitar">×</button></span>
+          <li class="item-edit" data-ei="${ei}">
+            <div class="fila-item">
+              <label class="campo campo-nombre">
+                <input type="text" data-el="nombre" value="${esc(el.nombre)}" aria-label="Descripción del elemento" autocomplete="off">
+              </label>
+              ${conMarca ? `
+              <label class="campo campo-marca">
+                <input type="text" data-el="marca" value="${esc(el.marca)}" placeholder="Marca" aria-label="Marca" autocomplete="off">
+              </label>` : ""}
+              <label class="campo campo-num">
+                <input type="number" data-el="cantidad" value="${esc(el.cantidad)}" min="0" step="any" aria-label="Cantidad">
+              </label>
+              <label class="campo campo-val">
+                <input type="text" inputmode="decimal" data-el="valorUnitario" value="${esc(fmtPrecioInput(el.valorUnitario))}" placeholder="$ 0" aria-label="Valor unitario" autocomplete="off">
+              </label>
+              <label class="campo campo-val">
+                <input type="text" class="total-pend" data-total value="${moneda(el.valorTotal)}" readonly tabindex="-1" aria-label="Valor total">
+              </label>
+              <button type="button" class="quitar" data-accion="quitarEl" data-ei="${ei}" title="Quitar">×</button>
+            </div>
             <div data-alerta-el="${ei}"></div>
           </li>`).join("")}
       </ul>
@@ -522,6 +538,57 @@ $("btnAddCompra").addEventListener("click", () => {
   pintarCompras({ ci: compras.length - 1, campo: "nombre" });
 });
 
+// Da formato "$ 1.234,5" a un campo de valor mientras se escribe, conserva el cursor y devuelve el valor crudo ("1234.5")
+function formatearPrecioEnInput(input) {
+  const caret = input.selectionStart;
+  // Cuántos dígitos o comas hay a la izquierda del cursor
+  const izq = input.value.slice(0, caret).replace(/[^\d,]/g, "").length;
+
+  // Solo dígitos y una coma decimal
+  const txt = input.value.replace(/[^\d,]/g, "");
+  const i = txt.indexOf(",");
+  let ent = i === -1 ? txt : txt.slice(0, i);
+  const dec = i === -1 ? undefined : txt.slice(i + 1).replace(/,/g, "");
+  ent = ent.replace(/^0+(?=\d)/, "");
+
+  const raw = ent === "" && dec === undefined ? "" : (ent || "0") + (dec !== undefined ? "." + dec : "");
+  input.value = fmtPrecioInput(raw);
+
+  // Devuelve el cursor a su lugar tras el formato
+  let n = 0, pos = 0;
+  for (; pos < input.value.length && n < izq; pos++) {
+    if (/[\d,]/.test(input.value[pos])) n++;
+  }
+  input.setSelectionRange(pos, pos);
+  return raw;
+}
+
+// Edición de un elemento ya agregado (descripción, marca, cantidad y valor unitario)
+listaCompras.addEventListener("input", (e) => {
+  const campo = e.target.dataset.el;
+  if (!campo) return;
+  const caja = e.target.closest(".comercio");
+  const li = e.target.closest("li[data-ei]");
+  if (!caja || !li) return;
+  const el = compras[Number(caja.dataset.ci)].elementos[Number(li.dataset.ei)];
+
+  if (campo === "nombre" || campo === "marca") {
+    el[campo] = e.target.value;
+  } else if (campo === "cantidad") {
+    el.cantidad = e.target.value === "" ? NaN : parseFloat(e.target.value);
+  } else if (campo === "valorUnitario") {
+    const raw = formatearPrecioEnInput(e.target);
+    el.valorUnitario = raw === "" ? NaN : parseFloat(raw);
+  }
+
+  if (campo === "cantidad" || campo === "valorUnitario") {
+    const ok = Number.isFinite(el.cantidad) && Number.isFinite(el.valorUnitario);
+    el.valorTotal = ok ? redondear(el.cantidad * el.valorUnitario) : 0;
+    li.querySelector("[data-total]").value = ok ? moneda(el.valorTotal) : "—";
+  }
+  actualizarAlertas();
+});
+
 // Lo que se escribe se guarda en el estado sin repintar (no se pierde el foco)
 listaCompras.addEventListener("input", (e) => {
   const campo = e.target.dataset.campo;
@@ -530,28 +597,7 @@ listaCompras.addEventListener("input", (e) => {
   const ci = Number(caja.dataset.ci);
 
   if (campo === "_precio") {
-    const input = e.target;
-    const caret = input.selectionStart;
-    // Cuántos dígitos o comas hay a la izquierda del cursor
-    const izq = input.value.slice(0, caret).replace(/[^\d,]/g, "").length;
-
-    // Solo dígitos y una coma decimal
-    const txt = input.value.replace(/[^\d,]/g, "");
-    const i = txt.indexOf(",");
-    let ent = i === -1 ? txt : txt.slice(0, i);
-    const dec = i === -1 ? undefined : txt.slice(i + 1).replace(/,/g, "");
-    ent = ent.replace(/^0+(?=\d)/, "");
-
-    const raw = ent === "" && dec === undefined ? "" : (ent || "0") + (dec !== undefined ? "." + dec : "");
-    compras[ci]._precio = raw;
-    input.value = fmtPrecioInput(raw);
-
-    // Devuelve el cursor a su lugar tras el formato
-    let n = 0, pos = 0;
-    for (; pos < input.value.length && n < izq; pos++) {
-      if (/[\d,]/.test(input.value[pos])) n++;
-    }
-    input.setSelectionRange(pos, pos);
+    compras[ci]._precio = formatearPrecioEnInput(e.target);
   } else {
     compras[ci][campo] = e.target.value;
   }
@@ -603,6 +649,7 @@ listaCompras.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { e.stopPropagation(); return cerrarSugerencias(); } // no cierra la ventana
     if (e.key === "Enter" && sugerencias.activo >= 0) { e.preventDefault(); return elegirSugerencia(sugerencias.activo); }
   }
+  if (e.key === "Enter" && e.target.dataset.el) { e.preventDefault(); return; }
   if (e.key !== "Enter") return;
   const campo = e.target.dataset.campo;
   const caja = e.target.closest(".comercio");
@@ -631,6 +678,16 @@ function consolidarCompras() {
       c._nom = ""; c._marca = ""; c._cant = "1"; c._precio = "";
     } else {
       return `Termina de agregar el elemento pendiente en «${c.nombre || "comercio sin elegir"}» (comercio, elemento y valor unitario).`;
+    }
+  }
+  for (const c of compras) {
+    for (const el of c.elementos) {
+      el.nombre = String(el.nombre).trim();
+      el.marca = String(el.marca || "").trim();
+      if (!el.nombre || !Number.isFinite(el.valorUnitario) || el.valorUnitario < 0 || !Number.isFinite(el.cantidad) || el.cantidad <= 0) {
+        return `Revisa los elementos de «${c.nombre || "comercio sin elegir"}»: cada uno necesita descripción, cantidad mayor que 0 y valor unitario.`;
+      }
+      el.valorTotal = redondear(el.cantidad * el.valorUnitario);
     }
   }
   compras = compras.filter((c) => c.nombre || c.fecha || c.elementos.length);

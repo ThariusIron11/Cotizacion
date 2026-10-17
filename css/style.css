@@ -285,3 +285,8 @@ body[data-rol="lector"] #formComercio,
 body[data-rol="lector"] [data-accion="borrar"] { display: none !important; }
 body[data-rol="lector"] .ficha { cursor: default; }
 body[data-rol="lector"] .ficha:hover { box-shadow: 0 1px 4px rgba(0,0,0,.08); transform: none; }
+
+/* Elementos ya agregados: se editan en la misma fila */
+.items li.item-edit { display: block; padding: 6px 0; }
+.item-edit .campo input { padding: 7px 9px; font-size: .95rem; }
+.item-edit .quitar { font-size: 1.4rem; padding: 0 8px; margin-bottom: 4px; }
