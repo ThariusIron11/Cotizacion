@@ -31,6 +31,7 @@ const listaRemisiones = $("listaRemisiones");
 const listaCompras = $("listaCompras");
 const avisoCatalogo = $("avisoCatalogo");
 const resultados = $("resultados");
+const listaRelacion = $("listaRelacion");
 const buscador = $("buscador");
 const buscadorId = $("buscadorId");
 const mensaje = $("mensaje");
@@ -92,6 +93,7 @@ function irATab(nombre) {
     t.setAttribute("aria-selected", String(activa));
   });
   paneles.forEach((p) => { p.hidden = p.dataset.panel !== nombre; });
+  if (nombre === "relacion") pintarRelacion();
 }
 tabs.forEach((t) => t.addEventListener("click", () => irATab(t.dataset.tab)));
 
@@ -105,7 +107,8 @@ function elementoNormal(e) {
     marca: e.marca || "",
     cantidad,
     valorUnitario,
-    valorTotal: Number(e.valorTotal ?? redondear(cantidad * valorUnitario))
+    valorTotal: Number(e.valorTotal ?? redondear(cantidad * valorUnitario)),
+    remision: e.remision || ""   // remisión a la que pertenece (vacía = sin asignar)
   };
 }
 
@@ -151,6 +154,7 @@ function cargar(d) {
   compras = copiarCompras(comprasDe(d));
   pintarRemisiones();
   pintarCompras();
+  pintarRelacion();
 }
 
 // ---------- Ventana emergente ----------
@@ -239,8 +243,72 @@ inputRemision.addEventListener("keydown", (e) => {
 listaRemisiones.addEventListener("click", (e) => {
   const i = e.target.dataset.i;
   if (i === undefined) return;
-  remisiones.splice(Number(i), 1);
+  const quitada = remisiones.splice(Number(i), 1)[0];
+  let liberados = 0;
+  for (const c of compras) for (const el of c.elementos) {
+    if (el.remision === quitada) { el.remision = ""; liberados++; }
+  }
   pintarRemisiones();
+  if (liberados) avisar(`${liberados} elemento${liberados === 1 ? "" : "s"} de la remisión ${quitada} quedó sin asignar.`);
+});
+
+// ---------- Relación remisión (pestaña "Relación remisión") ----------
+function opcionesRemision(actual) {
+  const lista = [...remisiones];
+  if (actual && !lista.includes(actual)) lista.push(actual); // por si la ficha trae una que ya no está en la lista
+  return `<option value="">Sin asignar</option>` + lista.map((r) =>
+    `<option value="${esc(r)}" ${r === actual ? "selected" : ""}>${esc(r)}${remisiones.includes(r) ? "" : " (no está en la lista)"}</option>`).join("");
+}
+
+function resumenRelacion() {
+  const total = compras.reduce((n, c) => n + c.elementos.length, 0);
+  const asignados = compras.reduce((n, c) => n + c.elementos.filter((e) => e.remision).length, 0);
+  return `<strong>${asignados}</strong> de ${total} elementos con remisión`;
+}
+
+function pintarRelacion() {
+  const total = compras.reduce((n, c) => n + c.elementos.length, 0);
+  if (!total) {
+    listaRelacion.innerHTML = '<p class="vacio">Aún no hay elementos comprados. Agrégalos en la pestaña «Compras».</p>';
+    return;
+  }
+  const aviso = remisiones.length ? "" :
+    '<p class="aviso">Esta ficha aún no tiene remisiones. Agrégalas en «Datos generales» y vuelve aquí.</p>';
+  listaRelacion.innerHTML = aviso + `<p class="resumen-rel">${resumenRelacion()}</p>` + compras.map((c, ci) => !c.elementos.length ? "" : `
+    <div class="comercio" data-ci="${ci}">
+      <div class="comercio-cab">
+        <span class="rel-titulo">${ICONO_COMERCIO} <strong>${esc(c.nombre || "Sin comercio")}</strong>${c.fecha ? ` · ${fechaCorta(c.fecha)}` : ""}</span>
+        <label class="rel-todos">Asignar todos a
+          <select data-rel="todos">
+            <option value="__">Elegir…</option><option value="">Sin asignar</option>
+            ${remisiones.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <ul class="items">
+        ${c.elementos.map((el, ei) => `
+          <li data-ei="${ei}">
+            <span><strong>${esc(el.nombre)}</strong>${el.marca ? ` <em>· ${esc(el.marca)}</em>` : ""}</span>
+            <span class="el-num">${fmtNum(el.cantidad)} × ${moneda(el.valorUnitario)} = <strong>${moneda(el.valorTotal)}</strong></span>
+            <select class="sel-rel" data-rel="uno" aria-label="Remisión de ${esc(el.nombre)}">${opcionesRemision(el.remision || "")}</select>
+          </li>`).join("")}
+      </ul>
+    </div>`).join("");
+}
+
+listaRelacion.addEventListener("change", (e) => {
+  const tipo = e.target.dataset.rel;
+  const caja = e.target.closest(".comercio");
+  if (!tipo || !caja) return;
+  const c = compras[Number(caja.dataset.ci)];
+  if (tipo === "uno") {
+    c.elementos[Number(e.target.closest("li").dataset.ei)].remision = e.target.value;
+    listaRelacion.querySelector(".resumen-rel").innerHTML = resumenRelacion();
+  } else {
+    if (e.target.value === "__") return;
+    c.elementos.forEach((el) => { el.remision = e.target.value; });
+    pintarRelacion();
+  }
 });
 
 // ---------- Compras (pestaña "Compras" del formulario) ----------
@@ -524,7 +592,8 @@ function agregarElemento(ci) {
     marca: usaMarcas(c.nombre) ? c._marca.trim() : "",
     cantidad,
     valorUnitario,
-    valorTotal: redondear(cantidad * valorUnitario)
+    valorTotal: redondear(cantidad * valorUnitario),
+    remision: ""
   });
   c._nom = "";
   c._marca = "";
@@ -741,7 +810,8 @@ form.addEventListener("submit", async (e) => {
           marca: el.marca || "",
           cantidad: el.cantidad,
           valorUnitario: el.valorUnitario,
-          valorTotal: el.valorTotal
+          valorTotal: el.valorTotal,
+          remision: el.remision || ""
         }))
       })),
       observaciones: inputObs.value.trim(),
@@ -826,6 +896,80 @@ function tablaCompra(c) {
 // Buscador de ID (independiente del general)
 const coincideId = (ficha, q) => !q || norm(ficha.id).includes(norm(q));
 
+// Vista elegida en cada ficha: "remision" o (por defecto) "comercio"
+const vistaFicha = new Map();
+
+const htmlCompraFicha = (c, ci) => `
+        <div class="compra">
+          <div class="compra-cab">
+            <span class="compra-nombre">${ICONO_COMERCIO} ${esc(c.nombre || "Sin comercio")}</span>
+            ${c.fecha ? `<span class="compra-fecha">Fecha: ${fechaCorta(c.fecha)}</span>` : ""}
+            <button type="button" class="btn-copiar" data-copiar="${ci}" title="Copiar lo comprado en este comercio">Copiar</button>
+          </div>
+          ${tablaCompra(c)}
+        </div>`;
+
+// Remisión > comercio > elementos. Al final, lo que aún no tiene remisión.
+function gruposPorRemision(f) {
+  const compras = comprasDe(f);
+  const lista = [...(f.remisiones || [])];
+  for (const c of compras) for (const raw of c.elementos || []) {
+    const r = elementoNormal(raw).remision;
+    if (r && !lista.includes(r)) lista.push(r);
+  }
+  return [...lista, ""].map((r) => {
+    const bloques = compras
+      .map((c) => ({ ...c, elementos: (c.elementos || []).filter((raw) => elementoNormal(raw).remision === r) }))
+      .filter((c) => c.elementos.length);
+    const total = bloques.reduce((n, c) => n + c.elementos.reduce((m, raw) => m + elementoNormal(raw).valorTotal, 0), 0);
+    return { r, bloques, total };
+  }).filter((g) => g.bloques.length || g.r);
+}
+
+function htmlPorRemision(f) {
+  return gruposPorRemision(f).map((g) => `
+        <div class="rem-grupo ${g.r ? "" : "rem-sin"}">
+          <div class="rem-cab">
+            <span>${g.r ? `Remisión ${esc(g.r)}` : "Sin remisión asignada"}</span>
+            ${g.bloques.length ? `<span>${moneda(g.total)}</span>
+            <button type="button" class="btn-copiar" data-copiar-rem="${esc(g.r)}" title="Copiar lo comprado en esta remisión">Copiar</button>` : ""}
+          </div>
+          <div class="rem-cuerpo">
+            ${g.bloques.map((c) => `
+            <div class="compra">
+              <div class="compra-cab">
+                <span class="compra-nombre">${ICONO_COMERCIO} ${esc(c.nombre || "Sin comercio")}</span>
+                ${c.fecha ? `<span class="compra-fecha">Fecha: ${fechaCorta(c.fecha)}</span>` : ""}
+              </div>
+              ${tablaCompra(c)}
+            </div>`).join("") || '<p class="vacio">Aún no hay elementos asignados a esta remisión.</p>'}
+          </div>
+        </div>`).join("") || '<p class="vacio">Sin compras registradas</p>';
+}
+
+function htmlFicha(f) {
+  const hayRem = (f.remisiones || []).length > 0;
+  const porRem = hayRem && vistaFicha.get(f.id) === "remision";
+  const cuerpo = porRem
+    ? htmlPorRemision(f)
+    : comprasDe(f).map(htmlCompraFicha).join("") || '<p class="vacio">Sin compras registradas</p>';
+  return `
+    <article class="ficha" data-id="${esc(f.id)}" ${puedeEditar() ? `tabindex="0" role="button" aria-label="Editar ficha ${esc(f.id)}"` : ""}>
+      <h3>
+        <span>ID: ${esc(f.id)}</span>
+        ${f.cliente ? `<span class="cliente">${ICONO_EMPRESA} ${esc(f.cliente)}</span>` : ""}
+      </h3>
+      <div><strong>Remisiones:</strong> ${(f.remisiones || []).map(esc).join(", ") || "—"}</div>
+      ${hayRem ? `
+      <div class="vista-toggle" role="group" aria-label="Vista de la ficha">
+        <button type="button" class="${porRem ? "secundario" : ""}" data-vista-ficha="comercio">Por comercio</button>
+        <button type="button" class="${porRem ? "" : "secundario"}" data-vista-ficha="remision">Por remisión</button>
+      </div>` : ""}
+      ${cuerpo}
+      ${f.observaciones ? `<div class="obs"><strong>Observaciones:</strong> ${esc(f.observaciones)}</div>` : ""}
+    </article>`;
+}
+
 function pintarFichas() {
   const q = buscador.value.trim();
   const qId = buscadorId.value.trim();
@@ -837,26 +981,7 @@ function pintarFichas() {
     return;
   }
 
-  resultados.innerHTML = lista.map((f) => `
-    <article class="ficha" data-id="${esc(f.id)}" ${puedeEditar() ? `tabindex="0" role="button" aria-label="Editar ficha ${esc(f.id)}"` : ""}>
-      <h3>
-        <span>ID: ${esc(f.id)}</span>
-        ${f.cliente ? `<span class="cliente">${ICONO_EMPRESA} ${esc(f.cliente)}</span>` : ""}
-      </h3>
-      <div><strong>Remisiones:</strong> ${(f.remisiones || []).map(esc).join(", ") || "—"}</div>
-      ${comprasDe(f).map((c, ci) => `
-        <div class="compra">
-          <div class="compra-cab">
-            <span class="compra-nombre">${ICONO_COMERCIO} ${esc(c.nombre || "Sin comercio")}</span>
-            ${c.fecha ? `<span class="compra-fecha">Fecha: ${fechaCorta(c.fecha)}</span>` : ""}
-            <button type="button" class="btn-copiar" data-copiar="${ci}" title="Copiar lo comprado en este comercio">Copiar</button>
-          </div>
-          ${tablaCompra(c)}
-        </div>
-      `).join("") || '<p class="vacio">Sin compras registradas</p>'}
-      ${f.observaciones ? `<div class="obs"><strong>Observaciones:</strong> ${esc(f.observaciones)}</div>` : ""}
-    </article>
-  `).join("");
+  resultados.innerHTML = lista.map(htmlFicha).join("");
 }
 
 buscador.addEventListener("input", pintarFichas);
@@ -872,11 +997,15 @@ function fichaDesdeEvento(e) {
 // Se compró de Soltrancia:
 //
 // * Sprocket 100B25 x 1 - $ 100.000 c/u
-function textoCompra(c) {
+// compacto: sin línea en blanco entre el comercio y sus elementos (se usa al copiar una remisión)
+function textoCompra(c, compacto = false) {
   const lineas = (c.elementos || []).map(elementoNormal).filter((e) => e.nombre).map((e) =>
     `* ${e.nombre} x ${e.cantidad} - ${moneda(e.valorUnitario).replace(/\s/g, " ")} c/u`);
-  return `Se compró de ${c.nombre || "(sin comercio)"}:\n\n${lineas.join("\n")}`;
+  return `Se compró de ${c.nombre || "(sin comercio)"}:${compacto ? "\n" : "\n\n"}${lineas.join("\n")}`;
 }
+
+// Remisión completa: un bloque por comercio, con una línea en blanco entre comercios
+const textoRemision = (g) => g.bloques.map((c) => textoCompra(c, true)).join("\n\n");
 
 async function copiarTexto(texto) {
   try {
@@ -896,6 +1025,28 @@ async function copiarTexto(texto) {
 }
 
 resultados.addEventListener("click", async (e) => {
+  const btnVista = e.target.closest("[data-vista-ficha]");
+  if (btnVista) {
+    const f = fichaDesdeEvento(e);
+    if (!f) return;
+    vistaFicha.set(f.id, btnVista.dataset.vistaFicha);
+    e.target.closest(".ficha").outerHTML = htmlFicha(f); // solo se repinta esta ficha
+    return;
+  }
+  const btnRem = e.target.closest("[data-copiar-rem]");
+  if (btnRem) {
+    const f = fichaDesdeEvento(e);
+    const g = f && gruposPorRemision(f).find((x) => x.r === btnRem.dataset.copiarRem);
+    if (!g || !g.bloques.length) return;
+    try {
+      await copiarTexto(textoRemision(g));
+      avisar(g.r ? `Copiado: remisión ${g.r}.` : "Copiado: elementos sin remisión.");
+    } catch (err) {
+      console.error(err);
+      avisar("No se pudo copiar.", "error");
+    }
+    return;
+  }
   const btnCopiar = e.target.closest("[data-copiar]");
   if (btnCopiar) {
     const f = fichaDesdeEvento(e);
@@ -911,13 +1062,14 @@ resultados.addEventListener("click", async (e) => {
     return;
   }
   // Solo la parte blanca de la ficha abre la edición: los bloques de compras y las observaciones no
-  if (e.target.closest(".compra, .obs")) return;
+  if (e.target.closest(".compra, .obs, .rem-grupo, .vista-toggle")) return;
   const ficha = fichaDesdeEvento(e);
   if (ficha) abrirEditar(ficha);
 });
 
 resultados.addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;
+  if (e.target.closest("button, .compra, .obs, .rem-grupo")) return; // los botones internos usan su propio Enter
   const ficha = fichaDesdeEvento(e);
   if (ficha) { e.preventDefault(); abrirEditar(ficha); }
 });

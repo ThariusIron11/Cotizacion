@@ -105,6 +105,7 @@
       <div class="tabs" role="tablist">
         <button type="button" role="tab" class="tab activo" data-tab="general" aria-selected="true">Datos generales</button>
         <button type="button" role="tab" class="tab" data-tab="compras" aria-selected="false">Compras</button>
+        <button type="button" role="tab" class="tab" data-tab="relacion" aria-selected="false">Relación remisión</button>
         <button type="button" role="tab" class="tab" data-tab="obs" aria-selected="false">Observaciones</button>
       </div>
 
@@ -137,6 +138,12 @@
           </p>
           <div id="listaCompras"></div>
           <button type="button" id="btnAddCompra" class="secundario">+ Agregar comercio</button>
+        </div>
+
+        <!-- Pestaña: Relación remisión (a qué remisión pertenece cada elemento comprado) -->
+        <div class="panel" data-panel="relacion" hidden>
+          <p class="vacio">Asigna a cada elemento comprado la remisión a la que pertenece. Puedes dejarlo sin asignar y hacerlo días después.</p>
+          <div id="listaRelacion"></div>
         </div>
 
         <!-- Pestaña 3: Observaciones -->

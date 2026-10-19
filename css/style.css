@@ -54,7 +54,6 @@ button.limpiar[hidden] { display: none; }
 .tabla-singular th, .tabla-singular td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--borde); }
 .tabla-singular thead th { background: var(--negro); color: #fff; white-space: nowrap; border-bottom: 3px solid var(--rojo); }
 .tabla-singular tbody tr:nth-child(even) { background: var(--gris); }
-.tabla-singular tbody tr:first-child td { font-weight: 600; }
 .tabla-singular td.precio, .tabla-singular th.precio { text-align: right; white-space: nowrap; }
 .tabla-singular td.fecha { white-space: nowrap; }
 .tabla-singular tr:last-child td { border-bottom: none; }
@@ -290,3 +289,32 @@ body[data-rol="lector"] .ficha:hover { box-shadow: 0 1px 4px rgba(0,0,0,.08); tr
 .items li.item-edit { display: block; padding: 6px 0; }
 .item-edit .campo input { padding: 7px 9px; font-size: .95rem; }
 .item-edit .quitar { font-size: 1.4rem; padding: 0 8px; margin-bottom: 4px; }
+
+/* Vista de la ficha: por comercio / por remisión */
+.vista-toggle { display: flex; gap: 6px; margin-top: 10px; }
+.vista-toggle button { padding: 5px 14px; font-size: .85rem; }
+.rem-grupo { border: 2px solid var(--rojo); border-radius: 10px; margin-top: 14px; overflow: hidden; cursor: default; }
+.rem-cab {
+  background: var(--rojo); color: #fff; padding: 8px 14px; font-weight: 700;
+  display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.rem-cuerpo { padding: 0 10px 10px; }
+.rem-cuerpo .vacio { margin: 12px 4px 4px; }
+.rem-grupo.rem-sin { border: 2px dashed var(--borde); }
+.rem-sin .rem-cab { background: var(--gris); color: var(--texto-suave); }
+
+/* Pestaña "Relación remisión" */
+.resumen-rel { margin: 0 0 12px; color: var(--texto-suave); }
+.rel-titulo { flex: 1; display: inline-flex; align-items: center; gap: 6px; min-width: 200px; }
+.rel-todos { flex: none; display: flex; align-items: center; gap: 8px; margin: 0; font-weight: 600; font-size: .9rem; }
+.rel-todos select { width: 150px; padding: 6px; }
+.sel-rel { width: 160px; flex: none; padding: 6px; }
+.comercio-cab .rel-todos { min-width: 0; }
+
+/* Botón copiar en el encabezado de cada remisión */
+.rem-cab > span:first-child { flex: 1; }
+.rem-cab { align-items: center; }
+.rem-cab .btn-copiar { padding: 4px 12px; font-size: .85rem; background: #fff; color: var(--rojo); }
+.rem-cab .btn-copiar:hover { background: var(--negro); color: #fff; }
+.rem-sin .rem-cab .btn-copiar { background: var(--negro); color: #fff; }
+.rem-sin .rem-cab .btn-copiar:hover { background: var(--rojo); }
