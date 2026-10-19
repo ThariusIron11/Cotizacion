@@ -898,6 +898,8 @@ const coincideId = (ficha, q) => !q || norm(ficha.id).includes(norm(q));
 
 // Vista elegida en cada ficha: "remision" o (por defecto) "comercio"
 const vistaFicha = new Map();
+// Fichas desplegadas (por defecto todas aparecen contraídas: solo ID, cliente y remisiones)
+const expandidas = new Set();
 
 const htmlCompraFicha = (c, ci) => `
         <div class="compra">
@@ -948,9 +950,10 @@ function htmlPorRemision(f) {
 }
 
 function htmlFicha(f) {
+  const abierta = expandidas.has(f.id);
   const hayRem = (f.remisiones || []).length > 0;
   const porRem = hayRem && vistaFicha.get(f.id) === "remision";
-  const cuerpo = porRem
+  const cuerpo = !abierta ? "" : porRem
     ? htmlPorRemision(f)
     : comprasDe(f).map(htmlCompraFicha).join("") || '<p class="vacio">Sin compras registradas</p>';
   return `
@@ -958,15 +961,17 @@ function htmlFicha(f) {
       <h3>
         <span>ID: ${esc(f.id)}</span>
         ${f.cliente ? `<span class="cliente">${ICONO_EMPRESA} ${esc(f.cliente)}</span>` : ""}
+        <button type="button" class="secundario btn-expandir" data-expandir aria-expanded="${abierta}">${abierta ? "Contraer ▴" : "Ver detalle ▾"}</button>
       </h3>
       <div><strong>Remisiones:</strong> ${(f.remisiones || []).map(esc).join(", ") || "—"}</div>
+      ${!abierta ? "" : `
       ${hayRem ? `
       <div class="vista-toggle" role="group" aria-label="Vista de la ficha">
         <button type="button" class="${porRem ? "secundario" : ""}" data-vista-ficha="comercio">Por comercio</button>
         <button type="button" class="${porRem ? "" : "secundario"}" data-vista-ficha="remision">Por remisión</button>
       </div>` : ""}
       ${cuerpo}
-      ${f.observaciones ? `<div class="obs"><strong>Observaciones:</strong> ${esc(f.observaciones)}</div>` : ""}
+      ${f.observaciones ? `<div class="obs"><strong>Observaciones:</strong> ${esc(f.observaciones)}</div>` : ""}`}
     </article>`;
 }
 
@@ -1025,6 +1030,14 @@ async function copiarTexto(texto) {
 }
 
 resultados.addEventListener("click", async (e) => {
+  const btnExpandir = e.target.closest("[data-expandir]");
+  if (btnExpandir) {
+    const f = fichaDesdeEvento(e);
+    if (!f) return;
+    if (expandidas.has(f.id)) expandidas.delete(f.id); else expandidas.add(f.id);
+    e.target.closest(".ficha").outerHTML = htmlFicha(f); // solo se repinta esta ficha
+    return;
+  }
   const btnVista = e.target.closest("[data-vista-ficha]");
   if (btnVista) {
     const f = fichaDesdeEvento(e);

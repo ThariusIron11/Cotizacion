@@ -318,3 +318,6 @@ body[data-rol="lector"] .ficha:hover { box-shadow: 0 1px 4px rgba(0,0,0,.08); tr
 .rem-cab .btn-copiar:hover { background: var(--negro); color: #fff; }
 .rem-sin .rem-cab .btn-copiar { background: var(--negro); color: #fff; }
 .rem-sin .rem-cab .btn-copiar:hover { background: var(--rojo); }
+
+/* Fichas contraídas / expandidas */
+.ficha h3 .btn-expandir { margin-left: auto; padding: 5px 14px; font-size: .85rem; }
