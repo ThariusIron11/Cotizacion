@@ -160,7 +160,6 @@ function cargar(d) {
 // ---------- Ventana emergente ----------
 function configurarModo() {
   $("tituloForm").textContent = editandoId ? `Editar ficha ${editandoId}` : "Nueva cotización";
-  inputId.disabled = !!editandoId;
   $("btnEliminar").hidden = !editandoId;
 }
 
@@ -768,15 +767,16 @@ function consolidarCompras() {
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!puedeEditar()) return avisar("Tu usuario es de solo lectura.", "error");
-  const id = (editandoId || inputId.value).trim();
+  const id = inputId.value.trim();
+  const cambiaId = !!editandoId && id !== editandoId; // se está renombrando una ficha existente
   if (!id) {
     irATab("general");
     inputId.focus();
     return avisar("Escribe el ID de la ficha.", "error");
   }
-  if (id.includes("/")) {
+  if (id.includes("/") || id === "." || id === ".." || /^__.*__$/.test(id)) {
     irATab("general");
-    return avisar('El ID no puede contener "/".', "error");
+    return avisar('ID no válido: no puede contener "/", ser "." o ".." ni empezar y terminar con "__".', "error");
   }
 
   const problema = consolidarCompras();
@@ -789,14 +789,16 @@ form.addEventListener("submit", async (e) => {
   const cambios = cambiosDelFormulario(); // se calcula antes de guardar y de limpiar el formulario
 
   try {
-    if (!editandoId) {
+    if (!editandoId || cambiaId) {
       const existente = await getDoc(doc(fichasRef, id));
       if (existente.exists()) {
         irATab("general");
-        return avisar("Ya existe una ficha con ese ID.", "error");
+        inputId.focus();
+        return avisar(`Ya existe una ficha con el ID ${id}.`, "error");
       }
     }
     const eraEdicion = !!editandoId;
+    const idAnterior = editandoId;
     const batch = writeBatch(db);
     batch.set(doc(fichasRef, id), {
       id,
@@ -819,11 +821,16 @@ form.addEventListener("submit", async (e) => {
       elementos: deleteField(),
       actualizado: serverTimestamp()
     }, { merge: true });
-    registrarCambio(batch, "fichas"); // avisa a los demás equipos (y a este) que hubo un cambio
+    if (cambiaId) batch.delete(doc(fichasRef, idAnterior)); // el ID es el nombre del documento: se crea el nuevo y se borra el anterior
+    registrarCambio(batch, "fichas", { borrado: cambiaId }); // avisa a los demás equipos (y a este) que hubo un cambio
     await batch.commit();
+    if (cambiaId) { // conserva abierta/vista de la ficha con su nuevo ID
+      if (expandidas.delete(idAnterior)) expandidas.add(id);
+      if (vistaFicha.has(idAnterior)) { vistaFicha.set(id, vistaFicha.get(idAnterior)); vistaFicha.delete(idAnterior); }
+    }
     sincronizarAhora();               // trae de inmediato lo guardado, sin esperar los 30 s
     terminar();
-    const base = eraEdicion ? "Ficha actualizada." : "Ficha guardada.";
+    const base = cambiaId ? `Ficha actualizada (ID ${idAnterior} → ${id}).` : eraEdicion ? "Ficha actualizada." : "Ficha guardada.";
     const resumen = (lista) => lista.slice(0, 3).map((x) => `${x.nombre} (${moneda(Math.abs(x.a.diferencia))})`).join(", ")
       + (lista.length > 3 ? ` y ${lista.length - 3} más` : "");
     const aumentos = cambios.filter((x) => x.a.tipo === "aumento");
