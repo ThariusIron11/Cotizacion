@@ -9,7 +9,8 @@ const norm = (t) => String(t).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,
 const clave = (v, sin) => (v ? norm(v).trim() : sin);
 
 // Filtro de pastillas con autocompletado. Varias pastillas = coincide con cualquiera de ellas.
-function crearChips({ contenedor, etiqueta, placeholder, alCambiar }) {
+// Las pastillas elegidas no se dibujan aquí sino en "destino" (la fila que queda entre los filtros y la tabla).
+function crearChips({ contenedor, destino, tipo, etiqueta, placeholder, alCambiar }) {
   const idInput = contenedor.id + "-in";
   contenedor.innerHTML = `
     <label class="chips-etiqueta" for="${idInput}">${esc(etiqueta)}</label>
@@ -30,13 +31,8 @@ function crearChips({ contenedor, etiqueta, placeholder, alCambiar }) {
   const textoDe = (v) => (opciones.find((o) => o.valor === v) || { texto: v }).texto;
 
   function pintarPastillas() {
-    caja.querySelectorAll(".pastilla").forEach((n) => n.remove());
-    for (const v of elegidos) {
-      const span = document.createElement("span");
-      span.className = "pastilla";
-      span.innerHTML = `${esc(textoDe(v))}<button type="button" class="quitar" data-quitar="${esc(v)}" aria-label="Quitar ${esc(textoDe(v))}">×</button>`;
-      caja.insertBefore(span, input);
-    }
+    destino.innerHTML = elegidos.map((v) => `
+      <span class="pastilla pastilla-${tipo}"><span class="pastilla-tipo">${esc(etiqueta)}:</span> ${esc(textoDe(v))}<button type="button" class="quitar" data-quitar="${esc(v)}" aria-label="Quitar ${esc(etiqueta)} ${esc(textoDe(v))}">×</button></span>`).join("");
   }
 
   function pintarLista() {
@@ -105,10 +101,10 @@ function crearChips({ contenedor, etiqueta, placeholder, alCambiar }) {
     if (li) agregar(visibles[Number(li.dataset.i)].valor);
   });
 
-  caja.addEventListener("click", (e) => {
+  caja.addEventListener("click", () => input.focus());
+  destino.addEventListener("click", (e) => {
     const x = e.target.closest("[data-quitar]");
-    if (x) { quitar(x.dataset.quitar); input.focus(); return; }
-    input.focus();
+    if (x) quitar(x.dataset.quitar);
   });
 
   return {
@@ -151,14 +147,25 @@ function opcionesDe(filas, campo, valorSin, textoSin) {
 // alCambiar se llama cada vez que cambia el texto, una marca o un comercio.
 // btnQuitarTodo: botón que limpia texto, marcas y comercios a la vez (solo se ve si hay algún filtro)
 export function crearFiltro({ input, btnLimpiar, btnQuitarTodo, marcas, comercios, alCambiar }) {
+  // Fila de pastillas: justo debajo de la fila de filtros y encima de la tabla
+  const fila = document.createElement("div");
+  fila.className = "pastillas-fila";
+  fila.hidden = true;
+  const grupoMarca = document.createElement("span");
+  const grupoComercio = document.createElement("span");
+  grupoMarca.className = grupoComercio.className = "pastillas-grupo";
+  fila.append(grupoMarca, grupoComercio);
+  marcas.parentElement.after(fila);
+
   const hayFiltro = () => !!(input.value.trim() || chipsMarca.hay() || chipsComercio.hay());
-  const cambiar = () => {
+  const refrescarControles = () => {
     btnLimpiar.hidden = !input.value;
     btnQuitarTodo.hidden = !hayFiltro();
-    alCambiar();
+    fila.hidden = !(chipsMarca.hay() || chipsComercio.hay());
   };
-  const chipsMarca = crearChips({ contenedor: marcas, etiqueta: "Marca", placeholder: "Escribe una marca…", alCambiar: cambiar });
-  const chipsComercio = crearChips({ contenedor: comercios, etiqueta: "Comercio", placeholder: "Escribe un comercio…", alCambiar: cambiar });
+  const cambiar = () => { refrescarControles(); alCambiar(); };
+  const chipsMarca = crearChips({ contenedor: marcas, destino: grupoMarca, tipo: "marca", etiqueta: "Marca", placeholder: "Escribe una marca…", alCambiar: cambiar });
+  const chipsComercio = crearChips({ contenedor: comercios, destino: grupoComercio, tipo: "comercio", etiqueta: "Comercio", placeholder: "Escribe un comercio…", alCambiar: cambiar });
 
   input.addEventListener("input", cambiar);
   input.addEventListener("keydown", (e) => {
@@ -175,8 +182,7 @@ export function crearFiltro({ input, btnLimpiar, btnQuitarTodo, marcas, comercio
     chipsComercio.limpiar();
     cambiar();
   });
-  btnLimpiar.hidden = !input.value;
-  btnQuitarTodo.hidden = !hayFiltro();
+  refrescarControles();
 
   return {
     // Hay texto escrito o alguna marca/comercio elegido
@@ -186,7 +192,7 @@ export function crearFiltro({ input, btnLimpiar, btnQuitarTodo, marcas, comercio
     llenarOpciones(filas) {
       chipsMarca.llenar(opcionesDe(filas, "marca", SIN_MARCA, "Sin marca"));
       chipsComercio.llenar(opcionesDe(filas, "comercio", SIN_COMERCIO, "Sin comercio"));
-      btnQuitarTodo.hidden = !hayFiltro(); // por si una opción elegida ya no existe
+      refrescarControles(); // por si una opción elegida ya no existe
     },
 
     // Devuelve solo las filas (con .nombre, .marca y .comercio) que cumplen texto, marca y comercio

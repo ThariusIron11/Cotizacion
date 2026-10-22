@@ -346,3 +346,11 @@ body[data-rol="lector"] .ficha:hover { box-shadow: 0 1px 4px rgba(0,0,0,.08); tr
 
 .btn-quitar-filtros { flex: none; height: 42px; white-space: nowrap; }
 button[hidden] { display: none; }
+
+/* Pastillas elegidas: debajo de los filtros y encima de la tabla */
+.pastillas-fila { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: -4px 0 14px; }
+.pastillas-fila[hidden] { display: none; }
+.pastillas-grupo { display: contents; }
+.pastilla-tipo { font-weight: 400; color: var(--texto-suave); margin-right: 4px; }
+.pastilla { background: var(--blanco); padding: 4px 4px 4px 12px; }
+.pastilla-comercio { border-color: var(--negro); }
