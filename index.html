@@ -57,9 +57,9 @@
           <input type="text" id="buscadorElemento" placeholder="Escribe el elemento para ver su historial de precios..." aria-label="Buscar elemento singular" autocomplete="off">
           <button type="button" id="btnLimpiarElemento" class="limpiar" aria-label="Borrar búsqueda" title="Borrar" hidden>×</button>
         </div>
-        <label class="filtro-marca">Marca
-          <select id="filtroMarca"><option value="">Todas las marcas</option></select>
-        </label>
+        <div class="filtro-chips" id="chipsMarca"></div>
+        <div class="filtro-chips" id="chipsComercio"></div>
+        <button type="button" id="btnQuitarFiltros" class="secundario btn-quitar-filtros" hidden>Quitar filtros</button>
       </div>
       <div id="resultadosSingular"></div>
     </section>
@@ -72,9 +72,9 @@
           <input type="text" id="buscadorTracking" placeholder="Escribe el elemento para ver su tasa de cambio..." aria-label="Buscar en tracking" autocomplete="off">
           <button type="button" id="btnLimpiarTracking" class="limpiar" aria-label="Borrar búsqueda" title="Borrar" hidden>×</button>
         </div>
-        <label class="filtro-marca">Marca
-          <select id="filtroMarcaTracking"><option value="">Todas las marcas</option></select>
-        </label>
+        <div class="filtro-chips" id="chipsMarcaTracking"></div>
+        <div class="filtro-chips" id="chipsComercioTracking"></div>
+        <button type="button" id="btnQuitarFiltrosTracking" class="secundario btn-quitar-filtros" hidden>Quitar filtros</button>
       </div>
       <div id="resultadosTracking"></div>
       <nav id="paginacionTracking" class="paginacion" aria-label="Paginación"></nav>

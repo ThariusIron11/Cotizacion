@@ -30,7 +30,9 @@ export function iniciarTracking({ comprasDe, elementoNormal, moneda }) {
   const filtro = crearFiltro({
     input: document.getElementById("buscadorTracking"),
     btnLimpiar: document.getElementById("btnLimpiarTracking"),
-    select: document.getElementById("filtroMarcaTracking"),
+    btnQuitarTodo: document.getElementById("btnQuitarFiltrosTracking"),
+    marcas: document.getElementById("chipsMarcaTracking"),
+    comercios: document.getElementById("chipsComercioTracking"),
     alCambiar: () => { pagina = 1; pintar(); }
   });
 
@@ -251,14 +253,14 @@ export function iniciarTracking({ comprasDe, elementoNormal, moneda }) {
     if (r) abrirGrafica(r);
   });
 
-  filtro.llenarMarcas(filas);
+  filtro.llenarOpciones(filas);
   pintar();
 
   // app.js lo llama cada vez que cambian las fichas en Firestore
   return {
     actualizar(fichas) {
       filas = construirFilas(fichas);
-      filtro.llenarMarcas(filas);
+      filtro.llenarOpciones(filas);
       pintar();
     }
   };

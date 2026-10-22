@@ -17,7 +17,9 @@ export function iniciarElementoSingular({ comprasDe, elementoNormal, moneda, fec
   const filtro = crearFiltro({
     input: document.getElementById("buscadorElemento"),
     btnLimpiar: document.getElementById("btnLimpiarElemento"),
-    select: document.getElementById("filtroMarca"),
+    btnQuitarTodo: document.getElementById("btnQuitarFiltros"),
+    marcas: document.getElementById("chipsMarca"),
+    comercios: document.getElementById("chipsComercio"),
     alCambiar: () => pintar()
   });
 
@@ -45,7 +47,7 @@ export function iniciarElementoSingular({ comprasDe, elementoNormal, moneda, fec
   function pintar() {
     if (!filtro.hayFiltro()) {
       contador.textContent = "";
-      resultados.innerHTML = '<p class="vacio">Escribe un elemento o elige una marca para ver su historial de precios, del más reciente al más antiguo.</p>';
+      resultados.innerHTML = '<p class="vacio">Escribe un elemento, o elige una marca o un comercio, para ver su historial de precios, del más reciente al más antiguo.</p>';
       return;
     }
 
@@ -59,7 +61,7 @@ export function iniciarElementoSingular({ comprasDe, elementoNormal, moneda, fec
     contador.textContent = todas.length > MAX_FILAS ? `(${MAX_FILAS} de ${todas.length})` : `(${todas.length})`;
 
     if (!lista.length) {
-      resultados.innerHTML = "<p>No hay compras registradas con ese elemento y marca.</p>";
+      resultados.innerHTML = "<p>No hay compras registradas con esos filtros.</p>";
       return;
     }
 
@@ -83,14 +85,14 @@ export function iniciarElementoSingular({ comprasDe, elementoNormal, moneda, fec
       </div>`;
   }
 
-  filtro.llenarMarcas(filas);
+  filtro.llenarOpciones(filas);
   pintar();
 
   // app.js lo llama cada vez que cambian las fichas en Firestore
   return {
     actualizar(fichas) {
       filas = construirHistorial(fichas);
-      filtro.llenarMarcas(filas);
+      filtro.llenarOpciones(filas);
       pintar();
     }
   };
