@@ -1116,6 +1116,85 @@ crearFuente({
   }
 });
 
+// ---------- Autorrelleno del cliente (sugiere los clientes ya registrados en otras fichas) ----------
+const listaClientes = document.createElement("ul");
+listaClientes.className = "sugerencias";
+listaClientes.hidden = true;
+inputCliente.closest("label").appendChild(listaClientes);
+let sugClientes = [];
+let sugClienteActiva = -1;
+
+function clientesRegistrados() {
+  const mapa = new Map();
+  for (const f of todasLasFichas) {
+    const nombre = String(f.cliente || "").trim().replace(/\s+/g, " ");
+    if (!nombre) continue;
+    const k = norm(nombre).trim();
+    const x = mapa.get(k) || { nombre, n: 0 };
+    x.n++;
+    mapa.set(k, x);
+  }
+  return [...mapa.values()];
+}
+
+function pintarSugerenciasCliente() {
+  listaClientes.innerHTML = sugClientes.map((c, i) =>
+    `<li data-i="${i}" class="${i === sugClienteActiva ? "activa" : ""}">${esc(c.nombre)} <em>· ${c.n} ficha${c.n === 1 ? "" : "s"}</em></li>`).join("");
+  listaClientes.hidden = !sugClientes.length;
+}
+
+function mostrarSugerenciasCliente() {
+  const q = norm(inputCliente.value.trim()).replace(/\s+/g, " ");
+  const palabras = q.split(" ").filter(Boolean);
+  sugClientes = clientesRegistrados()
+    .filter((c) => palabras.every((p) => norm(c.nombre).includes(p)))
+    .filter((c) => norm(c.nombre).trim() !== q) // no sugiere lo que ya está escrito igual
+    .sort((a, b) =>
+      (norm(b.nombre).startsWith(q) - norm(a.nombre).startsWith(q)) || // primero los que empiezan así
+      (b.n - a.n) ||                                                   // luego los más usados
+      a.nombre.localeCompare(b.nombre, "es"))
+    .slice(0, 8);
+  sugClienteActiva = -1;
+  pintarSugerenciasCliente();
+}
+
+const cerrarSugerenciasCliente = () => { listaClientes.hidden = true; };
+
+function elegirCliente(i) {
+  const c = sugClientes[i];
+  if (!c) return;
+  inputCliente.value = c.nombre;
+  cerrarSugerenciasCliente();
+}
+
+inputCliente.addEventListener("input", mostrarSugerenciasCliente);
+inputCliente.addEventListener("focus", () => { if (!inputCliente.value.trim()) mostrarSugerenciasCliente(); });
+inputCliente.addEventListener("blur", cerrarSugerenciasCliente);
+inputCliente.addEventListener("keydown", (e) => {
+  if (listaClientes.hidden) {
+    if (e.key === "ArrowDown") { e.preventDefault(); mostrarSugerenciasCliente(); }
+    return;
+  }
+  const n = sugClientes.length;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    sugClienteActiva = e.key === "ArrowDown" ? (sugClienteActiva + 1) % n : (sugClienteActiva <= 0 ? n - 1 : sugClienteActiva - 1);
+    pintarSugerenciasCliente();
+  } else if (e.key === "Enter" && sugClienteActiva >= 0) {
+    e.preventDefault(); // elige la sugerencia en vez de guardar la ficha
+    elegirCliente(sugClienteActiva);
+  } else if (e.key === "Escape") {
+    e.stopPropagation(); // no cierra la ventana
+    cerrarSugerenciasCliente();
+  }
+});
+// mousedown (no click) para que el campo no pierda el foco antes de elegir
+listaClientes.addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  const li = e.target.closest("li[data-i]");
+  if (li) elegirCliente(Number(li.dataset.i));
+});
+
 // ---------- Arranque ----------
 iniciarComercios({ alCambiar: () => pintarCompras(), avisar });
 pintarRemisiones();

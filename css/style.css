@@ -354,3 +354,6 @@ button[hidden] { display: none; }
 .pastilla-tipo { font-weight: 400; color: var(--texto-suave); margin-right: 4px; }
 .pastilla { background: var(--blanco); padding: 4px 4px 4px 12px; }
 .pastilla-comercio { border-color: var(--negro); }
+
+/* Autorrelleno del cliente */
+.campo-cliente { position: relative; }
