@@ -1,0 +1,796 @@
+// ================== Pestaña: Equipos ==================
+// Catálogo de tipos/referencias de equipos sobre Firestore (colección "equipos").
+// Sin manejo de stock por ahora (posible futuro).
+//
+// Cada equipo:
+// {
+//   nombre, tipoId (referencia a un doc de "tipos_equipo", ver config.js),
+//   variante, peso (número o null), usaSerial (boolean)
+// }
+//
+// El catálogo de tipos vive en config.js (window.tiposEquipoCache) y se
+// escucha vía el evento 'tipos-equipo:cambio' para mantenerse sincronizado.
+//
+// Mismo comportamiento de modal que Clientes/Equipos: backdrop conserva el
+// borrador, Cancelar limpia todo, y reabrir retoma el borrador si sigue vigente.
+
+(function () {
+  const COLECCION = 'equipos';
+  const TIPOS_CON_ALERTA_PESO = ['motor', 'reductor']; // comparación en minúsculas
+
+  const tablaBody  = document.getElementById('tabla-equipos-body');
+  const tablaEmpty = document.getElementById('equipos-empty');
+  const modal       = document.getElementById('modal-equipo');
+  const modalTitulo = document.getElementById('modal-equipo-titulo');
+  const form         = document.getElementById('form-equipo');
+  const buscador      = document.getElementById('buscador-equipos');
+  // Filtro por tipo: se escribe, aparecen sugerencias, y cada tipo elegido
+  // queda como una pastilla con ✕ (igual que los filtros de Pedidos). Sin
+  // ninguna pastilla se muestran todos los equipos.
+  const inputTipoFiltro = document.getElementById('buscador-tipo-equipos');
+  const resultadosTipoFiltro = document.getElementById('resultados-buscador-tipo-equipos');
+  const contenedorTiposActivos = document.getElementById('filtros-tipo-equipos-activos');
+
+  const inputId       = document.getElementById('equipo-id');
+  const inputNombre   = document.getElementById('equipo-nombre');
+  const inputTipo     = document.getElementById('equipo-tipo');
+  const inputTipoTexto = document.getElementById('equipo-tipo-input');
+  const resultadosTipo = document.getElementById('equipo-tipo-resultados');
+  const inputVariante = document.getElementById('equipo-variante');
+  const avisoExistente = document.getElementById('aviso-equipo-existente');
+  const inputPeso     = document.getElementById('equipo-peso');
+  const inputUsaSerial = document.getElementById('equipo-usa-serial');
+  const grupoBrazoEje = document.getElementById('grupo-brazo-eje');
+  const inputLlevaBrazo = document.getElementById('equipo-lleva-brazo');
+  const inputLlevaEje = document.getElementById('equipo-lleva-eje');
+  const inputLlevaFlanche = document.getElementById('equipo-lleva-flanche');
+
+  const grupoAcopleCompuesto = document.getElementById('grupo-acople-compuesto');
+  const inputEsCompuesto = document.getElementById('equipo-es-compuesto');
+  const piezasCompuestoWrap = document.getElementById('piezas-compuesto-wrap');
+  const piezasCompuestoList = document.getElementById('piezas-compuesto-list');
+  const hintPesoCalculado = document.getElementById('hint-peso-calculado');
+
+  const TIPOS_CON_BRAZO_EJE = ['reductor', 'motoreductor'];
+  const TIPO_ACOPLE_COMPUESTO = ['acople']; // solo este tag puede marcarse como compuesto
+  const TIPO_PIEZAS_ACOPLE = ['piezas de acople']; // de aquí se buscan las piezas que lo componen
+
+  let equiposCache = []; // [{id, ...datos}] — también expuesto en window.equiposCache
+  let filtroTexto = '';
+  const filtroTiposIds = new Set(); // vacío = todos los tipos
+  let borradorId = null;
+
+  // ---------- Helpers ----------
+
+  function escapeHtml(str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function escapeAttr(str) {
+    return String(str ?? '').replace(/"/g, '&quot;');
+  }
+
+  function normalizar(str) {
+    return String(str ?? '')
+      .toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  }
+
+  function formatearPeso(peso) {
+    if (peso === undefined || peso === null || peso === '') return 'Sin peso';
+    return `${peso} kg`;
+  }
+
+  // Para un Acople compuesto, el peso real es la suma de (peso de cada pieza x su
+  // cantidad). Si a alguna pieza le falta el peso, no se puede calcular (null).
+  function calcularPesoEquipo(equipo) {
+    if (!equipo?.esCompuesto || !(equipo.piezasCompuesto || []).length) {
+      return equipo?.peso ?? null;
+    }
+    let total = 0;
+    for (const p of equipo.piezasCompuesto) {
+      const pieza = equiposCache.find(eq => eq.id === p.piezaId);
+      if (!pieza || pieza.peso === undefined || pieza.peso === null) return null;
+      total += pieza.peso * (p.cantidad || 1);
+    }
+    return Math.round(total * 100) / 100;
+  }
+
+  function buscarTipo(tipoId) {
+    return (window.tiposEquipoCache || []).find(t => t.id === tipoId) || null;
+  }
+
+  // ---------- Sincronizar filtro (select) y buscador del modal con el catálogo de tipos ----------
+
+  function poblarSelectsDeTipo() {
+    // Las pastillas del filtro se redibujan por si cambió el nombre/ícono de
+    // un tipo (o si se borró alguno que estaba filtrando).
+    renderFiltroTipos();
+
+    // El buscador del modal lee window.tiposEquipoCache en vivo al escribir,
+    // así que no hace falta repoblar nada ahí — solo re-sincronizar el TEXTO
+    // visible con el id ya elegido, por si le cambiaron el nombre/ícono.
+    const tipo = buscarTipo(inputTipo.value);
+    if (tipo) inputTipoTexto.value = `${tipo.icono ? tipo.icono + ' ' : ''}${tipo.nombre}`;
+  }
+
+  // Buscador de texto para el tipo dentro del modal: escribes, aparecen
+  // coincidencias, eliges una y queda guardado el id en el input oculto.
+  function mostrarResultadosTipo() {
+    const tipos = window.tiposEquipoCache || [];
+    const t = normalizar(inputTipoTexto.value);
+    const coincidencias = (t ? tipos.filter(ti => normalizar(ti.nombre).includes(t)) : tipos).slice(0, 8);
+    resultadosTipo.innerHTML = coincidencias.length
+      ? coincidencias.map(ti => `<div class="buscador-item" data-id="${ti.id}">${window.iconoTipoHtml(ti)} ${escapeHtml(ti.nombre)}</div>`).join('')
+      : `<div class="buscador-item-vacio">Sin coincidencias</div>`;
+    resultadosTipo.classList.add('open');
+    resultadosTipo.querySelectorAll('.buscador-item').forEach(el => {
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // evita que el blur del input cierre la lista antes del click
+        const ti = (window.tiposEquipoCache || []).find(x => x.id === el.dataset.id);
+        if (ti) seleccionarTipo(ti);
+      });
+    });
+  }
+
+  function seleccionarTipo(ti) {
+    inputTipo.value = ti.id;
+    inputTipoTexto.value = `${ti.icono ? ti.icono + ' ' : ''}${ti.nombre}`;
+    resultadosTipo.classList.remove('open');
+    inputTipo.dispatchEvent(new Event('change')); // dispara la lógica que ya dependía del 'change' del select
+  }
+
+  inputTipoTexto.addEventListener('input', () => {
+    inputTipo.value = ''; // hasta que elija algo de la lista, no hay tipo válido
+    mostrarResultadosTipo();
+    inputTipo.dispatchEvent(new Event('change'));
+  });
+  // 'click' (no 'focus'): así no se abre sola si el campo llega a quedar
+  // enfocado por algo que no sea un clic real del usuario.
+  inputTipoTexto.addEventListener('click', mostrarResultadosTipo);
+  inputTipoTexto.addEventListener('blur', () => {
+    setTimeout(() => resultadosTipo.classList.remove('open'), 120);
+  });
+
+  document.addEventListener('tipos-equipo:cambio', () => {
+    poblarSelectsDeTipo();
+    renderTabla(); // los badges de tipo pueden haber cambiado de nombre/color
+  });
+  // Por si config.js ya recibió datos antes de que este script termine de cargar.
+  if (window.tiposEquipoCache && window.tiposEquipoCache.length) {
+    poblarSelectsDeTipo();
+  }
+
+  const TIPOS_CON_SERIAL_POR_DEFECTO = ['motor', 'reductor', 'motovibrador'];
+
+  function actualizarVisibilidadBrazoEje() {
+    const tipo = buscarTipo(inputTipo.value);
+    const aplica = tipo && TIPOS_CON_BRAZO_EJE.includes(normalizar(tipo.nombre));
+    grupoBrazoEje.style.display = aplica ? 'block' : 'none';
+    if (!aplica) {
+      inputLlevaBrazo.checked = false;
+      inputLlevaEje.checked = false;
+      inputLlevaFlanche.checked = false;
+    }
+  }
+
+  function actualizarVisibilidadAcopleCompuesto() {
+    const tipo = buscarTipo(inputTipo.value);
+    const aplica = tipo && TIPO_ACOPLE_COMPUESTO.includes(normalizar(tipo.nombre));
+    grupoAcopleCompuesto.style.display = aplica ? 'block' : 'none';
+    if (!aplica) {
+      inputEsCompuesto.checked = false;
+      piezasCompuestoWrap.style.display = 'none';
+      piezasCompuestoList.innerHTML = '';
+    }
+  }
+
+  function actualizarPesoCompuesto() {
+    if (!inputEsCompuesto.checked) {
+      inputPeso.readOnly = false;
+      hintPesoCalculado.style.display = 'none';
+      return;
+    }
+    inputPeso.readOnly = true;
+    const filas = piezasCompuestoList.querySelectorAll('.pieza-compuesto-row');
+    let total = 0;
+    let completo = true;
+    let hayPiezas = false;
+    filas.forEach(fila => {
+      const piezaId = fila.querySelector('.pieza-compuesto-id').value;
+      if (!piezaId) return;
+      hayPiezas = true;
+      const cantidad = parseInt(fila.querySelector('.pieza-compuesto-cantidad').value, 10) || 1;
+      const pieza = equiposCache.find(eq => eq.id === piezaId);
+      if (!pieza || pieza.peso === undefined || pieza.peso === null) {
+        completo = false;
+      } else {
+        total += pieza.peso * cantidad;
+      }
+    });
+
+    if (!hayPiezas) {
+      inputPeso.value = '';
+      hintPesoCalculado.style.display = 'block';
+      hintPesoCalculado.className = 'hint-peso-calculado incompleto';
+      hintPesoCalculado.textContent = 'Agrega piezas para calcular el peso.';
+      return;
+    }
+    if (!completo) {
+      hintPesoCalculado.style.display = 'block';
+      hintPesoCalculado.className = 'hint-peso-calculado incompleto';
+      hintPesoCalculado.textContent = '⚠️ Falta el peso de alguna pieza — el total no se puede calcular todavía.';
+      inputPeso.value = '';
+      return;
+    }
+    const totalRedondeado = Math.round(total * 100) / 100;
+    inputPeso.value = String(totalRedondeado);
+    hintPesoCalculado.style.display = 'block';
+    hintPesoCalculado.className = 'hint-peso-calculado';
+    hintPesoCalculado.textContent = `✅ Calculado automáticamente: suma de sus ${filas.length} pieza(s).`;
+  }
+
+  inputEsCompuesto.addEventListener('change', () => {
+    piezasCompuestoWrap.style.display = inputEsCompuesto.checked ? 'block' : 'none';
+    if (inputEsCompuesto.checked && !piezasCompuestoList.children.length) {
+      nuevaFilaPiezaCompuesto();
+    }
+    if (!inputEsCompuesto.checked) {
+      piezasCompuestoList.innerHTML = '';
+    }
+    actualizarPesoCompuesto();
+  });
+
+  function nombreMostrableEquipo(eq) {
+    return eq.nombre + (eq.variante ? ` (${eq.variante})` : '');
+  }
+
+  // Buscador con autocompletar para elegir una pieza de acople del catálogo,
+  // excluyendo el propio equipo que se está editando (evita auto-referencia).
+  function inicializarBuscadorPieza(contenedor, seleccionInicialId) {
+    const inputTexto = contenedor.querySelector('.buscador-input');
+    const inputValor = contenedor.querySelector('input[type="hidden"]');
+    const resultados = contenedor.querySelector('.buscador-resultados');
+
+    function catalogoFiltrado(texto) {
+      const propioId = inputId.value;
+      const porTipo = equiposCache.filter(eq => {
+        if (eq.id === propioId) return false; // no puede componerse de sí mismo
+        const tipo = buscarTipo(eq.tipoId);
+        return tipo && TIPO_PIEZAS_ACOPLE.includes(normalizar(tipo.nombre));
+      });
+      const t = normalizar(texto);
+      const coincidencias = t
+        ? porTipo.filter(eq => normalizar(eq.nombre + ' ' + (eq.variante || '')).includes(t))
+        : porTipo;
+      return coincidencias.slice(0, 8);
+    }
+
+    function mostrarResultados() {
+      const lista = catalogoFiltrado(inputTexto.value);
+      resultados.innerHTML = lista.length
+        ? lista.map(eq => `<div class="buscador-item" data-id="${eq.id}">${escapeHtml(nombreMostrableEquipo(eq))}</div>`).join('')
+        : '<div class="buscador-item-vacio">Sin coincidencias en el catálogo</div>';
+      resultados.classList.add('open');
+      resultados.querySelectorAll('.buscador-item').forEach(el => {
+        el.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const eq = equiposCache.find(x => x.id === el.dataset.id);
+          if (eq) seleccionar(eq);
+        });
+      });
+    }
+
+    function seleccionar(eq) {
+      inputValor.value = eq.id;
+      inputTexto.value = nombreMostrableEquipo(eq);
+      resultados.classList.remove('open');
+      actualizarPesoCompuesto();
+    }
+
+    inputTexto.addEventListener('input', () => {
+      inputValor.value = '';
+      mostrarResultados();
+    });
+    inputTexto.addEventListener('focus', mostrarResultados);
+    inputTexto.addEventListener('blur', () => {
+      setTimeout(() => resultados.classList.remove('open'), 120);
+    });
+
+    if (seleccionInicialId) {
+      const eq = equiposCache.find(x => x.id === seleccionInicialId);
+      if (eq) {
+        inputValor.value = eq.id;
+        inputTexto.value = nombreMostrableEquipo(eq);
+      }
+    }
+  }
+
+  function nuevaFilaPiezaCompuesto(pieza) {
+    const row = document.createElement('div');
+    row.className = 'pieza-compuesto-row';
+    row.innerHTML = `
+      <div class="buscador-equipo">
+        <input type="text" class="buscador-input" placeholder="Buscar pieza de acople..." autocomplete="off">
+        <input type="hidden" class="pieza-compuesto-id">
+        <div class="buscador-resultados"></div>
+      </div>
+      <input type="number" class="pieza-compuesto-cantidad" min="1" step="1" placeholder="Cant." value="${pieza?.cantidad ?? 1}">
+      <button type="button" class="remove-contacto" title="Quitar pieza">✕</button>
+    `;
+    row.querySelector('.remove-contacto').addEventListener('click', () => {
+      row.remove();
+      actualizarPesoCompuesto();
+    });
+    row.querySelector('.pieza-compuesto-cantidad').addEventListener('input', actualizarPesoCompuesto);
+    piezasCompuestoList.appendChild(row);
+    inicializarBuscadorPieza(row.querySelector('.buscador-equipo'), pieza?.piezaId);
+  }
+
+  document.getElementById('btn-add-pieza-compuesto').addEventListener('click', () => nuevaFilaPiezaCompuesto());
+
+  function leerPiezasCompuestoDelFormulario() {
+    const filas = piezasCompuestoList.querySelectorAll('.pieza-compuesto-row');
+    const piezas = [];
+    filas.forEach(fila => {
+      const piezaId = fila.querySelector('.pieza-compuesto-id').value;
+      if (!piezaId) return;
+      const cantidad = parseInt(fila.querySelector('.pieza-compuesto-cantidad').value, 10) || 1;
+      piezas.push({ piezaId, cantidad });
+    });
+    return piezas;
+  }
+
+  inputTipo.addEventListener('change', () => {
+    // Solo sugiere el valor por defecto al CREAR un equipo nuevo; al editar uno
+    // existente se respeta lo que ya tenía guardado.
+    if (!inputId.value) {
+      const tipo = buscarTipo(inputTipo.value);
+      if (tipo) inputUsaSerial.checked = TIPOS_CON_SERIAL_POR_DEFECTO.includes(normalizar(tipo.nombre));
+    }
+    actualizarVisibilidadBrazoEje();
+    actualizarVisibilidadAcopleCompuesto();
+  });
+
+  // ---------- Cargar / limpiar formulario ----------
+
+  function cargarFormularioDesdeEquipo(equipo) {
+    form.reset();
+    inputId.value = equipo ? equipo.id : '';
+    inputNombre.value = equipo?.nombre || '';
+    inputTipo.value = equipo?.tipoId || '';
+    const tipoCargado = buscarTipo(inputTipo.value);
+    inputTipoTexto.value = tipoCargado ? `${tipoCargado.icono ? tipoCargado.icono + ' ' : ''}${tipoCargado.nombre}` : '';
+    inputVariante.value = equipo?.variante || '';
+    inputPeso.value = (equipo?.peso ?? '') === '' ? '' : String(equipo.peso);
+    inputUsaSerial.checked = !!equipo?.usaSerial;
+    inputLlevaBrazo.checked = !!equipo?.puedeLlevarBrazo;
+    inputLlevaEje.checked = !!equipo?.puedeLlevarEjeSolido;
+    inputLlevaFlanche.checked = !!equipo?.puedeLlevarFlancheSalida;
+    actualizarVisibilidadBrazoEje();
+
+    inputEsCompuesto.checked = !!equipo?.esCompuesto;
+    piezasCompuestoList.innerHTML = '';
+    actualizarVisibilidadAcopleCompuesto(); // muestra/oculta el grupo según el tipo
+    piezasCompuestoWrap.style.display = inputEsCompuesto.checked ? 'block' : 'none';
+    const piezas = equipo?.piezasCompuesto || [];
+    if (inputEsCompuesto.checked) {
+      if (piezas.length) {
+        piezas.forEach(p => nuevaFilaPiezaCompuesto(p));
+      } else {
+        nuevaFilaPiezaCompuesto();
+      }
+    }
+    actualizarPesoCompuesto();
+    actualizarAvisoEquipoExistente();
+  }
+
+  // ---------- Aviso en vivo: ¿este equipo ya existe en el catálogo? ----------
+  // Mientras se escribe el nombre (y al elegir tipo o variante) se revisa el
+  // catálogo. Dos equipos son EL MISMO solo si coinciden nombre + tipo +
+  // variante (misma referencia con otra variante, ej. D3 vs D4, es otro equipo).
+
+  // Para comparar: sin tildes, mayúsculas, espacios ni guiones
+  // ("TR67 IEC 132" = "tr67-iec-132"). El punto decimal SÍ se conserva (y la
+  // coma cuenta como punto): "TR 67 18.6" y "TR 67 186" son equipos distintos.
+  function claveEquipo(texto) {
+    return normalizar(texto)
+      .replace(/,/g, '.')
+      .replace(/[^a-z0-9.]/g, '')
+      .replace(/^\.+|\.+$/g, '');
+  }
+
+  function textoEquipoCatalogo(eq, conHtml) {
+    const tipo = buscarTipo(eq.tipoId);
+    const nombre = conHtml ? `<b>${escapeHtml(eq.nombre)}</b>` : eq.nombre;
+    const variante = eq.variante ? ` (${conHtml ? escapeHtml(eq.variante) : eq.variante})` : '';
+    const tipoTxt = tipo ? ` · ${conHtml ? escapeHtml(tipo.nombre) : tipo.nombre}` : '';
+    return `${conHtml && tipo?.icono ? tipo.icono + ' ' : ''}${nombre}${variante}${tipoTxt}`;
+  }
+
+  // Equipo del catálogo que sea idéntico (nombre + tipo + variante). Si aún
+  // no se ha elegido tipo, se compara solo nombre + variante.
+  function buscarEquipoDuplicado(nombre, tipoId, variante, idActual) {
+    const n = claveEquipo(nombre);
+    const v = claveEquipo(variante);
+    if (!n) return null;
+    return equiposCache.find(eq =>
+      eq.id !== idActual &&
+      claveEquipo(eq.nombre) === n &&
+      claveEquipo(eq.variante) === v &&
+      (!tipoId || eq.tipoId === tipoId)
+    ) || null;
+  }
+
+  function actualizarAvisoEquipoExistente() {
+    const nombre = inputNombre.value.trim();
+    const n = claveEquipo(nombre);
+    if (nombre.length < 2 || !n) {
+      avisoExistente.style.display = 'none';
+      return;
+    }
+    const idActual = inputId.value;
+
+    const duplicado = buscarEquipoDuplicado(nombre, inputTipo.value, inputVariante.value, idActual);
+    if (duplicado) {
+      avisoExistente.className = 'aviso-equipo-existente exacto';
+      avisoExistente.innerHTML = `⛔ Este equipo <b>ya existe</b> en el catálogo:<div class="aviso-linea">${textoEquipoCatalogo(duplicado, true)}</div>` +
+        '<div class="aviso-linea">No se puede duplicar: si es otro, cambia el tipo o la variante.</div>';
+      avisoExistente.style.display = 'block';
+      return;
+    }
+
+    // Parecidos: el nombre escrito está dentro de uno del catálogo, o al revés
+    // (se ignoran nombres de 1-2 caracteres para no marcar todo).
+    const parecidos = equiposCache.filter(eq => {
+      if (eq.id === idActual) return false;
+      const c = claveEquipo(eq.nombre);
+      return c.includes(n) || (c.length >= 3 && n.includes(c));
+    });
+    if (parecidos.length) {
+      const MAX = 6;
+      const lineas = parecidos.slice(0, MAX).map(eq => `<div class="aviso-linea">• ${textoEquipoCatalogo(eq, true)}</div>`).join('');
+      const mas = parecidos.length > MAX ? `<div class="aviso-linea">… y ${parecidos.length - MAX} más</div>` : '';
+      avisoExistente.className = 'aviso-equipo-existente parecidos';
+      avisoExistente.innerHTML = `ℹ️ Ya hay ${parecidos.length === 1 ? '1 equipo parecido' : parecidos.length + ' equipos parecidos'} en el catálogo:${lineas}${mas}` +
+        '<div class="aviso-linea">Si el tuyo es distinto, diferéncialo con la variante o el tipo.</div>';
+      avisoExistente.style.display = 'block';
+      return;
+    }
+
+    avisoExistente.className = 'aviso-equipo-existente libre';
+    avisoExistente.innerHTML = '✅ No hay ningún equipo con ese nombre en el catálogo.';
+    avisoExistente.style.display = 'block';
+  }
+
+  inputNombre.addEventListener('input', actualizarAvisoEquipoExistente);
+  inputVariante.addEventListener('input', actualizarAvisoEquipoExistente);
+  inputTipo.addEventListener('change', actualizarAvisoEquipoExistente);
+
+  // ---------- Abrir / cerrar modal ----------
+
+  function abrirModalNuevo() {
+    if (borradorId === '') {
+      modalTitulo.textContent = 'Nuevo equipo';
+      modal.classList.add('open');
+      inputNombre.focus();
+      return;
+    }
+    modalTitulo.textContent = 'Nuevo equipo';
+    cargarFormularioDesdeEquipo(null);
+    borradorId = '';
+    modal.classList.add('open');
+    inputNombre.focus();
+  }
+
+  function abrirModalEditar(equipo) {
+    if (borradorId === equipo.id) {
+      modalTitulo.textContent = 'Editar equipo';
+      modal.classList.add('open');
+      inputNombre.focus();
+      return;
+    }
+    modalTitulo.textContent = 'Editar equipo';
+    cargarFormularioDesdeEquipo(equipo);
+    borradorId = equipo.id;
+    modal.classList.add('open');
+    inputNombre.focus();
+  }
+
+  function cerrarModalConservandoBorrador() {
+    modal.classList.remove('open');
+  }
+
+  function cancelarYLimpiar() {
+    form.reset();
+    borradorId = null;
+    modal.classList.remove('open');
+  }
+
+  document.getElementById('btn-nuevo-equipo').addEventListener('click', abrirModalNuevo);
+  document.getElementById('btn-cancelar-equipo').addEventListener('click', cancelarYLimpiar);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) cerrarModalConservandoBorrador();
+  });
+
+  // ---------- Guardar (crear/editar) ----------
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const pesoTexto = inputPeso.value.trim().replace(',', '.');
+    const peso = pesoTexto === '' ? null : parseFloat(pesoTexto);
+
+    const datos = {
+      nombre: inputNombre.value.trim(),
+      tipoId: inputTipo.value,
+      variante: inputVariante.value.trim(),
+      peso: (peso === null || isNaN(peso)) ? null : peso,
+      usaSerial: inputUsaSerial.checked,
+      puedeLlevarBrazo: inputLlevaBrazo.checked,
+      puedeLlevarEjeSolido: inputLlevaEje.checked,
+      puedeLlevarFlancheSalida: inputLlevaFlanche.checked,
+      esCompuesto: inputEsCompuesto.checked,
+      piezasCompuesto: inputEsCompuesto.checked ? leerPiezasCompuestoDelFormulario() : []
+    };
+
+    if (!datos.nombre) {
+      inputNombre.focus();
+      return;
+    }
+    if (!datos.tipoId) {
+      inputTipoTexto.focus();
+      return;
+    }
+
+    // Equipo idéntico (nombre + tipo + variante) ya existente: no se duplica.
+    // Solo se revisa en equipos nuevos o si se cambió alguno de esos tres
+    // datos (así se puede seguir editando el peso, etc. de un equipo que
+    // ya estuviera repetido de antes).
+    const idEdicion = inputId.value;
+    const original = idEdicion ? equiposCache.find(eq => eq.id === idEdicion) : null;
+    const cambioIdentidad = !original ||
+      claveEquipo(original.nombre) !== claveEquipo(datos.nombre) ||
+      original.tipoId !== datos.tipoId ||
+      claveEquipo(original.variante) !== claveEquipo(datos.variante);
+    if (cambioIdentidad) {
+      const duplicado = buscarEquipoDuplicado(datos.nombre, datos.tipoId, datos.variante, idEdicion);
+      if (duplicado) {
+        alert(`Este equipo ya existe en el catálogo: ${textoEquipoCatalogo(duplicado, false)}.\n\nCambia el nombre, el tipo o la variante.`);
+        inputNombre.focus();
+        return;
+      }
+    }
+
+    const id = inputId.value;
+    const btnGuardar = form.querySelector('button[type="submit"]');
+    btnGuardar.disabled = true;
+    btnGuardar.textContent = 'Guardando...';
+
+    try {
+      if (id) {
+        await db.collection(COLECCION).doc(id).update(datos);
+      } else {
+        datos.creadoEn = firebase.firestore.FieldValue.serverTimestamp();
+        await db.collection(COLECCION).add(datos);
+      }
+      form.reset();
+      borradorId = null;
+      modal.classList.remove('open');
+    } catch (err) {
+      console.error('Error guardando equipo:', err);
+      alert('No se pudo guardar el equipo. Revisa la consola.');
+    } finally {
+      btnGuardar.disabled = false;
+      btnGuardar.textContent = 'Guardar';
+    }
+  });
+
+  // ---------- Eliminar ----------
+
+  async function eliminarEquipo(equipo) {
+    const ok = confirm(`¿Eliminar "${equipo.nombre}"? Esta acción no se puede deshacer.`);
+    if (!ok) return;
+    try {
+      await db.collection(COLECCION).doc(equipo.id).delete();
+    } catch (err) {
+      console.error('Error eliminando equipo:', err);
+      alert('No se pudo eliminar el equipo. Revisa la consola.');
+    }
+  }
+
+  // ---------- Buscador + filtro por tipo ----------
+
+  buscador.addEventListener('input', () => {
+    filtroTexto = normalizar(buscador.value.trim());
+    renderTabla();
+  });
+
+  function renderFiltroTipos() {
+    // Un tipo borrado del catálogo deja de filtrar.
+    filtroTiposIds.forEach(id => { if (!buscarTipo(id)) filtroTiposIds.delete(id); });
+
+    const pastillas = Array.from(filtroTiposIds).map(id => {
+      const tipo = buscarTipo(id);
+      return `
+        <span class="filtro-chip-activo">
+          ${tipo.icono ? `<span>${tipo.icono}</span>` : ''}<span>${escapeHtml(tipo.nombre)}</span>
+          <button type="button" class="filtro-chip-quitar" data-id="${tipo.id}" aria-label="Quitar filtro ${escapeHtml(tipo.nombre)}" title="Quitar filtro">×</button>
+        </span>`;
+    }).join('');
+    contenedorTiposActivos.innerHTML = pastillas +
+      (filtroTiposIds.size > 1 ? '<button type="button" class="filtro-limpiar" id="btn-limpiar-filtro-tipos-equipos">Limpiar todo</button>' : '');
+
+    contenedorTiposActivos.querySelectorAll('.filtro-chip-quitar').forEach(btn => {
+      btn.addEventListener('click', () => {
+        filtroTiposIds.delete(btn.dataset.id);
+        renderFiltroTipos();
+        renderTabla();
+      });
+    });
+    const btnLimpiar = document.getElementById('btn-limpiar-filtro-tipos-equipos');
+    if (btnLimpiar) {
+      btnLimpiar.addEventListener('click', () => {
+        filtroTiposIds.clear();
+        renderFiltroTipos();
+        renderTabla();
+      });
+    }
+  }
+
+  function agregarFiltroTipo(tipoId) {
+    filtroTiposIds.add(tipoId);
+    inputTipoFiltro.value = '';
+    resultadosTipoFiltro.classList.remove('open');
+    renderFiltroTipos();
+    renderTabla();
+  }
+
+  // Sugerencias: los tipos que coinciden con lo escrito y que todavía no
+  // están como pastilla (con el campo vacío se ofrecen todos).
+  function tiposSugeridosFiltro() {
+    const termino = normalizar(inputTipoFiltro.value.trim());
+    return (window.tiposEquipoCache || []).filter(t =>
+      !filtroTiposIds.has(t.id) && (!termino || normalizar(t.nombre).includes(termino))
+    );
+  }
+
+  function mostrarSugerenciasTipoFiltro() {
+    const tipos = tiposSugeridosFiltro();
+    resultadosTipoFiltro.innerHTML = tipos.length
+      ? tipos.map(t => `<div class="buscador-item" data-id="${t.id}">${t.icono ? t.icono + ' ' : ''}${escapeHtml(t.nombre)}</div>`).join('')
+      : '<div class="buscador-item-vacio">Sin coincidencias</div>';
+    resultadosTipoFiltro.querySelectorAll('.buscador-item').forEach(el => {
+      el.addEventListener('click', () => agregarFiltroTipo(el.dataset.id));
+    });
+    resultadosTipoFiltro.classList.add('open');
+  }
+
+  inputTipoFiltro.addEventListener('input', mostrarSugerenciasTipoFiltro);
+  inputTipoFiltro.addEventListener('focus', mostrarSugerenciasTipoFiltro);
+  inputTipoFiltro.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      const primero = tiposSugeridosFiltro()[0];
+      if (primero) agregarFiltroTipo(primero.id);
+    } else if (ev.key === 'Escape') {
+      resultadosTipoFiltro.classList.remove('open');
+    }
+  });
+  document.addEventListener('click', (ev) => {
+    if (inputTipoFiltro.contains(ev.target) || resultadosTipoFiltro.contains(ev.target)) return;
+    if (!resultadosTipoFiltro.classList.contains('open')) return;
+    resultadosTipoFiltro.classList.remove('open');
+    inputTipoFiltro.value = ''; // lo escrito sin elegir de la lista se descarta
+  });
+
+  function equipoCoincideConFiltros(equipo) {
+    if (filtroTiposIds.size && !filtroTiposIds.has(equipo.tipoId)) return false;
+    if (filtroTexto && !normalizar(equipo.nombre).includes(filtroTexto)) return false;
+    return true;
+  }
+
+  // ---------- Render de la tabla ----------
+
+  function renderTabla() {
+    const listaFiltrada = equiposCache.filter(equipoCoincideConFiltros);
+
+    if (!listaFiltrada.length) {
+      tablaBody.innerHTML = '';
+      tablaEmpty.style.display = 'block';
+      tablaEmpty.textContent = equiposCache.length
+        ? 'Ningún equipo coincide con la búsqueda/filtro.'
+        : 'Todavía no hay equipos registrados.';
+      return;
+    }
+    tablaEmpty.style.display = 'none';
+
+    tablaBody.innerHTML = listaFiltrada.map(equipo => {
+      const tipo = buscarTipo(equipo.tipoId);
+      const tipoBadge = tipo
+        ? `<span class="tipo-badge" style="border-color:${tipo.color}; color:${tipo.color}; background:${tipo.color}22;">${window.iconoTipoHtml(tipo)} ${escapeHtml(tipo.nombre)}</span>`
+        : '<span style="color:var(--danger); font-size:12px;">Tipo no encontrado</span>';
+
+      const varianteHtml = equipo.variante
+        ? `<span class="tag-variante">${escapeHtml(equipo.variante)}</span>`
+        : '<span style="color:var(--ink-soft);">—</span>';
+
+      const nombreEsAlertaPeso = tipo && TIPOS_CON_ALERTA_PESO.includes(normalizar(tipo.nombre));
+      const faltaPeso = nombreEsAlertaPeso && (equipo.peso === null || equipo.peso === undefined);
+      const faltaPesoTag = faltaPeso ? ' <span class="tag-falta-peso">⚖️ Falta peso</span>' : '';
+
+      const extrasHtml = [
+        equipo.puedeLlevarBrazo ? '<span class="meta-chip" title="Puede llevar brazo de reacción">🦾 Brazo</span>' : '',
+        equipo.puedeLlevarEjeSolido ? '<span class="meta-chip" title="Puede llevar eje sólido">🔩 Eje</span>' : '',
+        equipo.esCompuesto ? `<span class="meta-chip" title="Compuesto por ${((equipo.piezasCompuesto||[]).length)} pieza(s)">🧩 Compuesto</span>` : ''
+      ].filter(Boolean).join(' ');
+
+      return `
+        <tr data-id="${equipo.id}" class="fila-equipo-clicable">
+          <td>${escapeHtml(equipo.nombre)} ${extrasHtml}</td>
+          <td>${tipoBadge}</td>
+          <td>${varianteHtml}</td>
+          <td>${formatearPeso(calcularPesoEquipo(equipo))}${faltaPesoTag}</td>
+          <td>${equipo.usaSerial ? '✅' : '—'}</td>
+          <td>
+            <div class="row-actions">
+              <button type="button" class="btn-eliminar danger" data-id="${equipo.id}">Eliminar</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    tablaBody.querySelectorAll('tr.fila-equipo-clicable').forEach(tr => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return; // los botones tienen su propio comportamiento
+        const equipo = equiposCache.find(eq => eq.id === tr.dataset.id);
+        if (equipo) abrirModalEditar(equipo);
+      });
+    });
+    tablaBody.querySelectorAll('.btn-eliminar').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const equipo = equiposCache.find(eq => eq.id === btn.dataset.id);
+        if (equipo) eliminarEquipo(equipo);
+      });
+    });
+  }
+
+  // ---------- Suscripción en tiempo real ----------
+
+  // Se suscribe solo cuando auth.js confirma la sesión ('auth:listo'). Si se
+  // suscribiera al cargar la página, en un computador sin sesión guardada
+  // Firestore rechazaría la lectura (permission-denied), la suscripción
+  // moriría y los equipos no aparecerían hasta recargar.
+  let suscrito = false;
+  let sesionLista = false;
+  function iniciarSuscripcion() {
+    if (!sesionLista || suscrito) return;
+    suscrito = true;
+    db.collection(COLECCION).orderBy('nombre').onSnapshot(
+      (snapshot) => {
+        equiposCache = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        window.equiposCache = equiposCache;
+        renderTabla();
+        actualizarAvisoEquipoExistente(); // por si el modal está abierto
+        document.dispatchEvent(new CustomEvent('equipos-catalogo:cambio', { detail: { equipos: equiposCache } }));
+      },
+      (err) => {
+        console.error('Error escuchando equipos:', err);
+      }
+    );
+  }
+
+  document.addEventListener('auth:listo', () => {
+    sesionLista = true;
+    iniciarSuscripcion();
+  });
+
+  document.addEventListener('tab:activada', (e) => {
+    if (e.detail.tab !== 'equipos') return;
+    iniciarSuscripcion();
+  });
+})();

@@ -1,103 +1,170 @@
-// Inicio de sesión con usuario y contraseña (Firebase Authentication).
-// - Si escribes un usuario sin "@" (ej. "mario"), se usa "mario@cotizacion.local" como correo interno.
-//   Los usuarios se crean en la consola de Firebase (Authentication > Users) con ese correo.
-// - "Recordarme": mantiene la sesión abierta y recuerda el usuario en este equipo.
-import {
-  signInWithEmailAndPassword, signOut, onAuthStateChanged,
-  setPersistence, browserLocalPersistence, browserSessionPersistence
-} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { auth, db } from "./firebase.js";
-import { borrarCache } from "./sync.js";
+// ================== Autenticación ==================
+// Pantalla de login con Firebase Authentication (correo + clave). Mientras
+// no haya una sesión válida, esta pantalla cubre toda la app (ver CSS
+// .login-overlay en index.html) y ningún otro módulo llega a leer ni
+// escribir en Firestore.
+//
+// Los demás archivos (pedidos.js, clientes.js, etc.) NO se suscriben a
+// Firestore por su cuenta al cargar la página — esperan al evento
+// 'auth:listo', que este archivo dispara una sola vez, justo después de
+// confirmar que hay sesión iniciada (recién autenticado, o porque el
+// navegador ya tenía la sesión guardada de una visita anterior).
 
-const DOMINIO = "@cotizacion.local";
-const CLAVE_USUARIO = "usuario-recordado";
+(function () {
+  const pantallaLogin  = document.getElementById('pantalla-login');
+  const loginCargando  = document.getElementById('login-cargando');
+  const loginMetodos   = document.getElementById('login-metodos');
+  const formLogin      = document.getElementById('form-login');
+  const inputCorreo    = document.getElementById('login-correo');
+  const inputClave     = document.getElementById('login-clave');
+  const loginError     = document.getElementById('login-error');
+  const btnLogin       = formLogin.querySelector('button[type="submit"]');
+  const btnGoogleLogin = document.getElementById('btn-google-login');
 
-const aCorreo = (u) => { const t = u.trim().toLowerCase(); return t.includes("@") ? t : t + DOMINIO; };
-const aUsuario = (correo) => (correo.endsWith(DOMINIO) ? correo.slice(0, -DOMINIO.length) : correo);
+  const infoUsuarioCorreo = document.getElementById('sidebar-usuario-correo');
+  const btnCerrarSesion   = document.getElementById('btn-cerrar-sesion');
 
-const MENSAJES = {
-  "auth/invalid-credential": "Usuario o contraseña incorrectos.",
-  "auth/invalid-login-credentials": "Usuario o contraseña incorrectos.",
-  "auth/wrong-password": "Usuario o contraseña incorrectos.",
-  "auth/user-not-found": "Usuario o contraseña incorrectos.",
-  "auth/invalid-email": "El usuario no es válido.",
-  "auth/user-disabled": "Este usuario está deshabilitado.",
-  "auth/too-many-requests": "Demasiados intentos fallidos. Espera unos minutos e inténtalo de nuevo.",
-  "auth/network-request-failed": "Sin conexión. Revisa tu internet."
-};
+  const CLAVE_RECORDAR_CORREO = 'edisatech_ultimo_correo';
 
-const leerRecordado = () => { try { return localStorage.getItem(CLAVE_USUARIO) || ""; } catch { return ""; } };
-const guardarRecordado = (v) => {
-  try { v ? localStorage.setItem(CLAVE_USUARIO, v) : localStorage.removeItem(CLAVE_USUARIO); } catch { /* sin almacenamiento */ }
-};
+  // Mantiene la sesión iniciada entre recargas y cierres del navegador
+  // (equivalente a "recordarme"), hasta que alguien pulse "Cerrar sesión".
+  firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
 
-// Rol del usuario: "editor" (puede crear, editar y eliminar) o "lector" (solo ver, buscar y copiar).
-// Se define en Firestore: documento usuarios/{uid} con el campo rol = "editor". Sin ese documento es lector.
-// La protección real está en las reglas de Firestore; esto solo adapta la pantalla.
-let rol = "lector";
-export const puedeEditar = () => rol === "editor";
+  // Recuerda el último correo usado, para no tener que volver a escribirlo
+  // cada vez que se cierra sesión.
+  const correoGuardado = localStorage.getItem(CLAVE_RECORDAR_CORREO);
+  if (correoGuardado) inputCorreo.value = correoGuardado;
 
-async function leerRol(uid) {
-  try {
-    const snap = await getDoc(doc(db, "usuarios", uid));
-    return snap.exists() && snap.data().rol === "editor" ? "editor" : "lector";
-  } catch (err) {
-    console.warn("No se pudo leer el rol, se entra como lector:", err);
-    return "lector";
-  }
-}
+  let yaDisparado = false; // 'auth:listo' se dispara una sola vez por sesión
 
-// alEntrar(usuario) se llama una vez cuando hay sesión (al iniciar o al volver a abrir la app)
-export function iniciarAuth({ alEntrar }) {
-  const $ = (id) => document.getElementById(id);
-  const form = $("formLogin"), inUsuario = $("loginUsuario"), inClave = $("loginClave");
-  const chkRecordar = $("loginRecordar"), lblError = $("loginError"), btnEntrar = $("btnEntrar");
-  const btnSalir = $("btnSalir"), lblUsuario = $("usuarioActual");
-
-  const recordado = leerRecordado();
-  inUsuario.value = recordado;
-  chkRecordar.checked = true;
-
-  let huboSesion = false;
-  onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      if (huboSesion) return;
-      huboSesion = true;
-      rol = await leerRol(user.uid); // se conoce antes de mostrar y de cargar datos
-      lblUsuario.textContent = aUsuario(user.email || "") + (puedeEditar() ? "" : " · solo lectura");
-      document.body.dataset.rol = rol;
-      document.body.dataset.sesion = "dentro";
-      alEntrar(user);
-    } else if (huboSesion) {
-      location.reload(); // la sesión se cerró: vuelve a la pantalla de inicio limpia
-    } else {
-      document.body.dataset.sesion = "fuera";
-      (recordado ? inClave : inUsuario).focus();
-    }
-  });
-
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    lblError.textContent = "";
-    btnEntrar.disabled = true;
+  // Que Firebase Authentication acepte el login solo confirma que la
+  // persona es quien dice ser — no que tenga permiso de usar el sistema.
+  // Eso se verifica aparte, leyendo su documento en /usuarios/{uid}, que es
+  // exactamente lo mismo que exige la regla de seguridad de Firestore. Si
+  // no existe (o no tiene un rol válido), esta lectura la rechaza Firestore
+  // con "permission-denied" — eso es justo la señal de "no autorizado".
+  //
+  // Roles válidos en /usuarios/{uid}.rol:
+  //   'normal'  → puede ver y editar (el de siempre).
+  //   'lectura' → solo puede observar (ver roles.js).
+  // Devuelve el rol, o null si la cuenta no tiene acceso.
+  async function obtenerRolDeAcceso(user) {
     try {
-      await setPersistence(auth, chkRecordar.checked ? browserLocalPersistence : browserSessionPersistence);
-      await signInWithEmailAndPassword(auth, aCorreo(inUsuario.value), inClave.value);
-      guardarRecordado(chkRecordar.checked ? inUsuario.value.trim() : "");
-      inClave.value = "";
+      const doc = await db.collection('usuarios').doc(user.uid).get();
+      if (!doc.exists) return null;
+      const rol = doc.data().rol;
+      return (rol === 'normal' || rol === 'lectura') ? rol : null;
     } catch (err) {
-      console.error(err);
-      lblError.textContent = MENSAJES[err.code] || "No se pudo iniciar sesión: " + err.message;
-      inClave.value = "";
-      inClave.focus();
-    } finally {
-      btnEntrar.disabled = false;
+      return null;
+    }
+  }
+
+  firebase.auth().onAuthStateChanged(async (user) => {
+    if (!user) {
+      loginCargando.style.display = 'none';
+      loginMetodos.style.display = 'block';
+      pantallaLogin.classList.add('open');
+      return;
+    }
+
+    // Se ve la pantalla de "Cargando" también durante esta verificación
+    // (además del chequeo inicial de sesión guardada), para no mostrar la
+    // app ni un solo instante antes de confirmar que tiene permiso.
+    loginMetodos.style.display = 'none';
+    loginCargando.textContent = 'Verificando acceso...';
+    loginCargando.style.display = 'block';
+
+    const rolAcceso = await obtenerRolDeAcceso(user);
+
+    if (!rolAcceso) {
+      await firebase.auth().signOut();
+      loginCargando.style.display = 'none';
+      loginMetodos.style.display = 'block';
+      pantallaLogin.classList.add('open');
+      loginError.textContent = 'Esta cuenta no tiene acceso a este sistema. Contacta al administrador.';
+      return;
+    }
+
+    loginCargando.style.display = 'none';
+    pantallaLogin.classList.remove('open');
+    if (infoUsuarioCorreo) infoUsuarioCorreo.textContent = user.email;
+
+    if (!yaDisparado) {
+      yaDisparado = true;
+      document.dispatchEvent(new CustomEvent('auth:listo', { detail: { user, rol: rolAcceso } }));
     }
   });
 
-  btnSalir.addEventListener("click", async () => {
-    await borrarCache();   // en equipos compartidos no quedan datos guardados
-    await signOut(auth);   // al cerrar sesión se recarga la página (ver arriba)
+  formLogin.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    loginError.textContent = '';
+
+    const correo = inputCorreo.value.trim();
+    const clave = inputClave.value;
+    if (!correo || !clave) return;
+
+    btnLogin.disabled = true;
+    btnLogin.textContent = 'Ingresando...';
+    try {
+      await firebase.auth().signInWithEmailAndPassword(correo, clave);
+      localStorage.setItem(CLAVE_RECORDAR_CORREO, correo);
+      inputClave.value = '';
+    } catch (err) {
+      console.error('Error de inicio de sesión:', err);
+      loginError.textContent = mensajeError(err.code);
+    } finally {
+      btnLogin.disabled = false;
+      btnLogin.textContent = 'Ingresar';
+    }
   });
-}
+
+  const proveedorGoogle = new firebase.auth.GoogleAuthProvider();
+
+  btnGoogleLogin.addEventListener('click', async () => {
+    loginError.textContent = '';
+    btnGoogleLogin.disabled = true;
+    try {
+      await firebase.auth().signInWithPopup(proveedorGoogle);
+      // onAuthStateChanged se encarga de cerrar la pantalla de login.
+    } catch (err) {
+      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
+        console.error('Error de inicio de sesión con Google:', err);
+        loginError.textContent = mensajeError(err.code);
+      }
+    } finally {
+      btnGoogleLogin.disabled = false;
+    }
+  });
+
+  function mensajeError(code) {
+    switch (code) {
+      case 'auth/invalid-email':
+        return 'El correo no es válido.';
+      case 'auth/user-not-found':
+      case 'auth/wrong-password':
+      case 'auth/invalid-credential':
+        return 'Correo o clave incorrectos.';
+      case 'auth/too-many-requests':
+        return 'Demasiados intentos. Espera un momento e inténtalo de nuevo.';
+      case 'auth/network-request-failed':
+        return 'Sin conexión a internet.';
+      case 'auth/popup-blocked':
+        return 'El navegador bloqueó la ventana de Google. Permite ventanas emergentes e inténtalo de nuevo.';
+      case 'auth/unauthorized-domain':
+        return 'Este dominio no está autorizado en Firebase para iniciar sesión con Google.';
+      case 'auth/account-exists-with-different-credential':
+        return 'Ese correo ya está registrado con otro método de acceso (correo/clave).';
+      default:
+        return 'No se pudo iniciar sesión. Revisa la consola.';
+    }
+  }
+
+  if (btnCerrarSesion) {
+    btnCerrarSesion.addEventListener('click', async () => {
+      await firebase.auth().signOut();
+      // Recarga limpia: reinicia todos los cachés y suscripciones de los
+      // demás módulos en vez de tener que desconectarlos uno por uno.
+      location.reload();
+    });
+  }
+})();
