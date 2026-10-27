@@ -31,7 +31,7 @@ main h2 span { color: var(--rojo); }
 .vista[hidden] { display: none; }
 
 .barra { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
-#buscador, #buscadorId, #buscadorElemento, #buscadorTracking {
+#buscador, #buscadorId, #buscadorEquipo, #buscadorElemento, #buscadorTracking {
   padding: 10px; border-radius: 6px;
   border: 1px solid #999; background: var(--blanco); color: var(--texto); font-size: 1rem;
 }
@@ -356,4 +356,14 @@ button[hidden] { display: none; }
 .pastilla-comercio { border-color: var(--negro); }
 
 /* Autorrelleno del cliente */
-.campo-cliente { position: relative; }
+.campo-sug { position: relative; }
+.campo-sug[hidden] { display: none; }
+
+/* Equipo asociado a la ficha */
+.equipo-bloque { margin-bottom: 16px; }
+.equipo-bloque .check { margin-bottom: 10px; }
+.equipo-ficha { margin-top: 12px; font-weight: 700; }
+.buscador-equipo { position: relative; flex: 0 1 220px; min-width: 160px; }
+#buscadorEquipo { width: 100%; }
+.pastilla-equipo { border-color: var(--negro); }
+#pastillasEquipo { margin: 4px 0 0; }

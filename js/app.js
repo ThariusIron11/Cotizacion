@@ -15,6 +15,7 @@ const fichasRef = collection(db, "fichas");
 let remisiones = [];
 let compras = [];          // [{ nombre, fecha, elementos: [...], _nom, _marca, _cant, _precio }]
 let editandoId = null;     // null = nueva cotización
+let equiposElegidos = []; // filtro de equipos de la lista de fichas: [{ clave, nombre }]
 let borrador = null;       // borrador de una cotización nueva mientras se edita otra ficha
 let todasLasFichas = [];
 let indicePrecios = new Map(); // historial de precios por elemento (ver alerta-precios.js)
@@ -27,6 +28,11 @@ const inputId = $("fichaId");
 const inputCliente = $("cliente");
 const inputRemision = $("remisionInput");
 const inputObs = $("observaciones");
+const chkEquipo = $("tieneEquipo");
+const campoEquipo = $("campoEquipo");
+const inputEquipo = $("equipo");
+const buscadorEquipo = $("buscadorEquipo");
+const pastillasEquipo = $("pastillasEquipo");
 const listaRemisiones = $("listaRemisiones");
 const listaCompras = $("listaCompras");
 const avisoCatalogo = $("avisoCatalogo");
@@ -133,12 +139,14 @@ function comprasDe(f) {
 }
 
 // ---------- Datos del formulario ----------
-const vacio = () => ({ id: "", cliente: "", remisiones: [], compras: [], observaciones: "" });
+const vacio = () => ({ id: "", cliente: "", tieneEquipo: false, equipo: "", remisiones: [], compras: [], observaciones: "" });
 
 function capturar() {
   return {
     id: inputId.value,
     cliente: inputCliente.value,
+    tieneEquipo: chkEquipo.checked,
+    equipo: inputEquipo.value,
     remisiones: [...remisiones],
     compras: copiarCompras(compras),
     observaciones: inputObs.value
@@ -148,6 +156,9 @@ function capturar() {
 function cargar(d) {
   inputId.value = d.id || "";
   inputCliente.value = d.cliente || "";
+  chkEquipo.checked = d.tieneEquipo ?? !!d.equipo;
+  inputEquipo.value = d.equipo || "";
+  campoEquipo.hidden = !chkEquipo.checked;
   inputRemision.value = "";
   inputObs.value = d.observaciones || "";
   remisiones = [...(d.remisiones || [])];
@@ -769,6 +780,12 @@ form.addEventListener("submit", async (e) => {
   if (!puedeEditar()) return avisar("Tu usuario es de solo lectura.", "error");
   const id = inputId.value.trim();
   const cambiaId = !!editandoId && id !== editandoId; // se está renombrando una ficha existente
+  const equipo = chkEquipo.checked ? inputEquipo.value.trim().replace(/\s+/g, " ") : "";
+  if (chkEquipo.checked && !equipo) {
+    irATab("general");
+    inputEquipo.focus();
+    return avisar("Escribe el equipo o desmarca «Asociada a un equipo».", "error");
+  }
   if (!id) {
     irATab("general");
     inputId.focus();
@@ -803,6 +820,7 @@ form.addEventListener("submit", async (e) => {
     batch.set(doc(fichasRef, id), {
       id,
       cliente: inputCliente.value.trim(),
+      equipo,
       remisiones,
       compras: compras.map((c) => ({
         nombre: c.nombre,
@@ -978,6 +996,7 @@ function htmlFicha(f) {
         <button type="button" class="${porRem ? "" : "secundario"}" data-vista-ficha="remision">Por remisión</button>
       </div>` : ""}
       ${cuerpo}
+      ${f.equipo ? `<div class="equipo-ficha">Equipo: ${esc(f.equipo)}</div>` : ""}
       ${f.observaciones ? `<div class="obs"><strong>Observaciones:</strong> ${esc(f.observaciones)}</div>` : ""}`}
     </article>`;
 }
@@ -985,7 +1004,9 @@ function htmlFicha(f) {
 function pintarFichas() {
   const q = buscador.value.trim();
   const qId = buscadorId.value.trim();
-  const lista = todasLasFichas.filter((f) => coincideId(f, qId) && coincide(f, q));
+  const coincideEquipo = (f) => !equiposElegidos.length ||
+    equiposElegidos.some((p) => norm(f.equipo || "").trim() === p.clave);
+  const lista = todasLasFichas.filter((f) => coincideId(f, qId) && coincide(f, q) && coincideEquipo(f));
   $("contador").textContent = `(${lista.length})`;
 
   if (!lista.length) {
@@ -1116,18 +1137,12 @@ crearFuente({
   }
 });
 
-// ---------- Autorrelleno del cliente (sugiere los clientes ya registrados en otras fichas) ----------
-const listaClientes = document.createElement("ul");
-listaClientes.className = "sugerencias";
-listaClientes.hidden = true;
-inputCliente.closest("label").appendChild(listaClientes);
-let sugClientes = [];
-let sugClienteActiva = -1;
-
-function clientesRegistrados() {
+// ---------- Autorrelleno (cliente, equipo y buscador de equipos) ----------
+// Valores distintos de un campo de las fichas ya registradas: [{ nombre, n }] (n = en cuántas fichas aparece)
+function registrados(campo) {
   const mapa = new Map();
   for (const f of todasLasFichas) {
-    const nombre = String(f.cliente || "").trim().replace(/\s+/g, " ");
+    const nombre = String(f[campo] || "").trim().replace(/\s+/g, " ");
     if (!nombre) continue;
     const k = norm(nombre).trim();
     const x = mapa.get(k) || { nombre, n: 0 };
@@ -1137,62 +1152,124 @@ function clientesRegistrados() {
   return [...mapa.values()];
 }
 
-function pintarSugerenciasCliente() {
-  listaClientes.innerHTML = sugClientes.map((c, i) =>
-    `<li data-i="${i}" class="${i === sugClienteActiva ? "activa" : ""}">${esc(c.nombre)} <em>· ${c.n} ficha${c.n === 1 ? "" : "s"}</em></li>`).join("");
-  listaClientes.hidden = !sugClientes.length;
-}
+// Lista de sugerencias bajo un campo de texto.
+//  valores():  [{ nombre, n }] de donde sugerir
+//  alElegir(nombre): qué hacer al elegir una sugerencia
+//  conteo: muestra en cuántas fichas aparece
+//  buscador: comportamiento de buscador (primera sugerencia marcada, no se queda texto suelto al salir)
+function autocompletar(input, { contenedor = input.closest("label"), valores, alElegir, conteo = false, buscador = false }) {
+  const lista = document.createElement("ul");
+  lista.className = "sugerencias";
+  lista.hidden = true;
+  contenedor.appendChild(lista);
+  let sug = [];
+  let activa = -1;
 
-function mostrarSugerenciasCliente() {
-  const q = norm(inputCliente.value.trim()).replace(/\s+/g, " ");
-  const palabras = q.split(" ").filter(Boolean);
-  sugClientes = clientesRegistrados()
-    .filter((c) => palabras.every((p) => norm(c.nombre).includes(p)))
-    .filter((c) => norm(c.nombre).trim() !== q) // no sugiere lo que ya está escrito igual
-    .sort((a, b) =>
-      (norm(b.nombre).startsWith(q) - norm(a.nombre).startsWith(q)) || // primero los que empiezan así
-      (b.n - a.n) ||                                                   // luego los más usados
-      a.nombre.localeCompare(b.nombre, "es"))
-    .slice(0, 8);
-  sugClienteActiva = -1;
-  pintarSugerenciasCliente();
-}
+  const pintar = () => {
+    lista.innerHTML = sug.map((c, i) =>
+      `<li data-i="${i}" class="${i === activa ? "activa" : ""}">${esc(c.nombre)}${conteo ? ` <em>· ${c.n} ficha${c.n === 1 ? "" : "s"}</em>` : ""}</li>`).join("");
+    lista.hidden = !sug.length;
+  };
 
-const cerrarSugerenciasCliente = () => { listaClientes.hidden = true; };
+  const mostrar = () => {
+    const q = norm(input.value.trim()).replace(/\s+/g, " ");
+    const palabras = q.split(" ").filter(Boolean);
+    sug = valores()
+      .filter((c) => palabras.every((p) => norm(c.nombre).includes(p)))
+      .filter((c) => buscador || norm(c.nombre).trim() !== q) // en formularios no sugiere lo ya escrito igual
+      .sort((a, b) =>
+        (norm(b.nombre).startsWith(q) - norm(a.nombre).startsWith(q)) || // primero los que empiezan así
+        (b.n - a.n) ||                                                   // luego los más usados
+        a.nombre.localeCompare(b.nombre, "es"))
+      .slice(0, 8);
+    activa = buscador && q && sug.length ? 0 : -1;
+    pintar();
+  };
 
-function elegirCliente(i) {
-  const c = sugClientes[i];
-  if (!c) return;
-  inputCliente.value = c.nombre;
-  cerrarSugerenciasCliente();
-}
+  const cerrar = () => { lista.hidden = true; };
+  const elegir = (i) => { const c = sug[i]; if (!c) return; alElegir(c.nombre); cerrar(); };
 
-inputCliente.addEventListener("input", mostrarSugerenciasCliente);
-inputCliente.addEventListener("focus", () => { if (!inputCliente.value.trim()) mostrarSugerenciasCliente(); });
-inputCliente.addEventListener("blur", cerrarSugerenciasCliente);
-inputCliente.addEventListener("keydown", (e) => {
-  if (listaClientes.hidden) {
-    if (e.key === "ArrowDown") { e.preventDefault(); mostrarSugerenciasCliente(); }
-    return;
-  }
-  const n = sugClientes.length;
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+  input.addEventListener("input", mostrar);
+  input.addEventListener("focus", () => { if (buscador || !input.value.trim()) mostrar(); });
+  input.addEventListener("blur", () => { cerrar(); if (buscador) input.value = ""; });
+  input.addEventListener("keydown", (e) => {
+    if (lista.hidden) {
+      if (e.key === "ArrowDown") { e.preventDefault(); mostrar(); }
+      return;
+    }
+    const n = sug.length;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      activa = e.key === "ArrowDown" ? (activa + 1) % n : (activa <= 0 ? n - 1 : activa - 1);
+      pintar();
+    } else if (e.key === "Enter" && activa >= 0) {
+      e.preventDefault(); // elige la sugerencia en vez de guardar la ficha
+      elegir(activa);
+    } else if (e.key === "Escape") {
+      e.stopPropagation(); // no cierra la ventana
+      if (buscador) input.value = "";
+      cerrar();
+    }
+  });
+  // mousedown (no click) para que el campo no pierda el foco antes de elegir
+  lista.addEventListener("mousedown", (e) => {
     e.preventDefault();
-    sugClienteActiva = e.key === "ArrowDown" ? (sugClienteActiva + 1) % n : (sugClienteActiva <= 0 ? n - 1 : sugClienteActiva - 1);
-    pintarSugerenciasCliente();
-  } else if (e.key === "Enter" && sugClienteActiva >= 0) {
-    e.preventDefault(); // elige la sugerencia en vez de guardar la ficha
-    elegirCliente(sugClienteActiva);
-  } else if (e.key === "Escape") {
-    e.stopPropagation(); // no cierra la ventana
-    cerrarSugerenciasCliente();
+    const li = e.target.closest("li[data-i]");
+    if (li) elegir(Number(li.dataset.i));
+  });
+}
+
+// Cliente (con cuántas fichas tiene cada uno)
+autocompletar(inputCliente, {
+  valores: () => registrados("cliente"),
+  alElegir: (nombre) => { inputCliente.value = nombre; },
+  conteo: true
+});
+
+// Equipo de la ficha (sin conteo)
+autocompletar(inputEquipo, {
+  valores: () => registrados("equipo"),
+  alElegir: (nombre) => { inputEquipo.value = nombre; }
+});
+
+chkEquipo.addEventListener("change", () => {
+  campoEquipo.hidden = !chkEquipo.checked;
+  if (chkEquipo.checked) inputEquipo.focus();
+});
+
+// Buscador de equipos de la lista de fichas: cada equipo elegido queda como pastilla
+function pintarPastillasEquipo() {
+  pastillasEquipo.innerHTML = equiposElegidos.map((p) => `
+    <span class="pastilla pastilla-equipo"><span class="pastilla-tipo">Equipo:</span> ${esc(p.nombre)}<button type="button" class="quitar" data-quitar="${esc(p.clave)}" aria-label="Quitar equipo ${esc(p.nombre)}">×</button></span>`).join("");
+  pastillasEquipo.hidden = !equiposElegidos.length;
+}
+
+autocompletar(buscadorEquipo, {
+  contenedor: buscadorEquipo.parentElement,
+  buscador: true,
+  valores: () => registrados("equipo").filter((e) => !equiposElegidos.some((p) => p.clave === norm(e.nombre).trim())),
+  alElegir: (nombre) => {
+    equiposElegidos.push({ clave: norm(nombre).trim(), nombre });
+    buscadorEquipo.value = "";
+    pintarPastillasEquipo();
+    pintarFichas();
   }
 });
-// mousedown (no click) para que el campo no pierda el foco antes de elegir
-listaClientes.addEventListener("mousedown", (e) => {
-  e.preventDefault();
-  const li = e.target.closest("li[data-i]");
-  if (li) elegirCliente(Number(li.dataset.i));
+
+pastillasEquipo.addEventListener("click", (e) => {
+  const x = e.target.closest("[data-quitar]");
+  if (!x) return;
+  equiposElegidos = equiposElegidos.filter((p) => p.clave !== x.dataset.quitar);
+  pintarPastillasEquipo();
+  pintarFichas();
+});
+
+buscadorEquipo.addEventListener("keydown", (e) => {
+  if (e.key === "Backspace" && !buscadorEquipo.value && equiposElegidos.length) {
+    equiposElegidos.pop();
+    pintarPastillasEquipo();
+    pintarFichas();
+  }
 });
 
 // ---------- Arranque ----------

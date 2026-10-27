@@ -43,8 +43,12 @@
       <div class="barra">
         <input type="search" id="buscadorId" placeholder="Buscar ID" aria-label="Buscar por ID de ficha" autocomplete="off">
         <input type="search" id="buscador" placeholder="Buscar por cliente, comercio, marca, remisión o elemento..." aria-label="Búsqueda general" autocomplete="off">
+        <div class="buscador-equipo">
+          <input type="search" id="buscadorEquipo" placeholder="Buscar equipo" aria-label="Buscar por equipo" autocomplete="off">
+        </div>
         <button type="button" id="btnNueva">+ Nueva cotización</button>
       </div>
+      <div id="pastillasEquipo" class="pastillas-fila" hidden></div>
       <h2>Fichas <span id="contador"></span></h2>
       <div id="resultados"></div>
     </section>
@@ -116,8 +120,18 @@
             <label>ID de la ficha
               <input type="text" id="fichaId" required>
             </label>
-            <label class="campo-cliente">Cliente <small>(opcional)</small>
+            <label class="campo-sug">Cliente <small>(opcional)</small>
               <input type="text" id="cliente">
+            </label>
+          </div>
+
+          <div class="equipo-bloque">
+            <label class="check">
+              <input type="checkbox" id="tieneEquipo">
+              Asociada a un equipo
+            </label>
+            <label class="campo-sug" id="campoEquipo" hidden>Equipo <small>(para el que se hizo la compra)</small>
+              <input type="text" id="equipo" placeholder="Escribe el equipo...">
             </label>
           </div>
 
